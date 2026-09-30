@@ -1,12 +1,14 @@
-const CACHE_NAME = "mies-dashboard-v2";
+const CACHE_NAME = "mies-dashboard-v6";
 
 const APP_SHELL = [
   "./",
   "./index.html",
   "./app.js",
+  "./cloud.js",
+  "./icon-maskable-512.png",
   "./manifest.json",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
+  "./icon-192.png",
+  "./icon-512.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -26,6 +28,8 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
+
+  if (new URL(req.url).hostname.endsWith("supabase.co")) return;
 
   const isSameOrigin = new URL(req.url).origin === self.location.origin;
 

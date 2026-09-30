@@ -1,6 +1,7 @@
-// src/app.source.jsx
+// app.jsx
 import React, { useState, useMemo, useEffect } from "react";
 import { createRoot } from "react-dom/client";
+import { cloudConfigured, getSession, signIn, signOut, loadRemote, saveRemote } from "./cloud.js";
 import {
   AreaChart,
   Area,
@@ -37,7 +38,7 @@ var DEFAULT_PLATFORMS = [
   { id: "shopee", name: "Shopee", color: "#EE4D2D", feePercent: 5 },
   { id: "lazada", name: "Lazada", color: "#0F146D", feePercent: 4 },
   { id: "tiktok", name: "TikTok Shop", color: "#111111", feePercent: 3.5 },
-  { id: "shopee jja", name: "shopee jja", color: "#1877F2", feePercent: 0 },
+  { id: "facebook", name: "Facebook", color: "#1877F2", feePercent: 0 },
   { id: "lineoa", name: "Line OA", color: "#06C755", feePercent: 0 },
   { id: "offline", name: "\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E49\u0E32\u0E19/\u0E2D\u0E37\u0E48\u0E19\u0E46", color: "#B8862F", feePercent: 0 }
 ];
@@ -400,7 +401,7 @@ function Dashboard({ sales, products, platforms, dateState, setDateState, onGoto
   return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(
     Header,
     {
-      title: "MIES TRADING",
+      title: "MIES Enterprise",
       subtitle: "Sales Overview",
       lowStockCount: products.filter((p) => getStockStatus(p) !== "\u0E1B\u0E01\u0E15\u0E34").length
     }
@@ -430,8 +431,6 @@ function QuickSaleForm({ products, platforms, onSubmit }) {
   const [fee, setFee] = useState(0);
   const [date, setDate] = useState((/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
   const [feeTouched, setFeeTouched] = useState(false);
-  const [feeMode, setFeeMode] = useState("percent");
-  const [feePercentInput, setFeePercentInput] = useState(0);
   const product = products.find((p) => p.id === productId);
   const platform = platforms.find((p) => p.id === platformId);
   const gross = (parseFloat(price) || 0) * (parseFloat(quantity) || 0);
@@ -439,27 +438,11 @@ function QuickSaleForm({ products, platforms, onSubmit }) {
     setPlatformId(id);
     if (!feeTouched) {
       const pl = platforms.find((p) => p.id === id);
-      setFeePercentInput(pl?.feePercent || 0);
       setFee(Math.round(gross * ((pl?.feePercent || 0) / 100) * 100) / 100);
     }
   }
-  useEffect(() => {
-    if (feeMode === "percent") {
-      const pct = parseFloat(feePercentInput) || 0;
-      setFee(Math.round(gross * (pct / 100) * 100) / 100);
-    }
-  }, [feePercentInput, gross, feeMode]);
-  useEffect(() => {
-    if (feeMode === "amount") {
-      const f = parseFloat(fee) || 0;
-      setFeePercentInput(gross > 0 ? Math.round(f / gross * 1e3) / 10 : 0);
-    }
-  }, [fee, gross, feeMode]);
   const cost = (product?.cost || 0) * (parseFloat(quantity) || 0);
-  const costPercent = gross > 0 ? cost / gross * 100 : 0;
-  const feePercentDisplay = gross > 0 ? fee / gross * 100 : 0;
   const profit = gross - coupon - fee - cost;
-  const profitPercent = gross > 0 ? profit / gross * 100 : 0;
   const canSubmit = productId && platformId && parseFloat(price) > 0 && parseFloat(quantity) > 0;
   function submit() {
     if (!canSubmit) return;
@@ -480,7 +463,6 @@ function QuickSaleForm({ products, platforms, onSubmit }) {
     setCoupon(0);
     setFee(0);
     setFeeTouched(false);
-    setFeePercentInput(0);
     setDate((/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
   }
   return /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 14 } }, "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), /* @__PURE__ */ React.createElement("select", { value: productId, onChange: (e) => setProductId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), products.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name, " (\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D ", p.stock, ")")))), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E08\u0E33\u0E19\u0E27\u0E19"), /* @__PURE__ */ React.createElement(
@@ -502,23 +484,7 @@ function QuickSaleForm({ products, platforms, onSubmit }) {
         setPrice(e.target.value);
       }
     }
-  ))), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "Platform"), /* @__PURE__ */ React.createElement("select", { value: platformId, onChange: (e) => handlePlatformChange(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u0E40\u0E25\u0E37\u0E2D\u0E01 Platform"), platforms.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name)))), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E04\u0E39\u0E1B\u0E2D\u0E07 (\u0E1A\u0E32\u0E17)"), /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", value: coupon, onChange: (e) => setCoupon(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("div", { className: "field-label-row" }, /* @__PURE__ */ React.createElement("span", null, "\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21"), /* @__PURE__ */ React.createElement("div", { className: "unit-toggle" }, /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      className: feeMode === "amount" ? "active" : "",
-      onClick: () => setFeeMode("amount")
-    },
-    "\u0E3F"
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      className: feeMode === "percent" ? "active" : "",
-      onClick: () => setFeeMode("percent")
-    },
-    "%"
-  ))), feeMode === "amount" ? /* @__PURE__ */ React.createElement(
+  ))), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "Platform"), /* @__PURE__ */ React.createElement("select", { value: platformId, onChange: (e) => handlePlatformChange(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u0E40\u0E25\u0E37\u0E2D\u0E01 Platform"), platforms.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name)))), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E04\u0E39\u0E1B\u0E2D\u0E07 (\u0E1A\u0E32\u0E17)"), /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", value: coupon, onChange: (e) => setCoupon(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21 (\u0E1A\u0E32\u0E17)"), /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
@@ -529,19 +495,7 @@ function QuickSaleForm({ products, platforms, onSubmit }) {
         setFeeTouched(true);
       }
     }
-  ) : /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      min: "0",
-      value: feePercentInput,
-      onChange: (e) => {
-        setFeePercentInput(e.target.value);
-        setFeeTouched(true);
-      },
-      placeholder: "% \u0E02\u0E2D\u0E07\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22"
-    }
-  ), /* @__PURE__ */ React.createElement("span", { className: "field-hint" }, feeMode === "amount" ? `= ${feePercentInput || 0}% \u0E02\u0E2D\u0E07\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22` : `= ${fmtCurrency(fee)}`))), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), /* @__PURE__ */ React.createElement("input", { type: "date", value: date, onChange: (e) => setDate(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "live-summary" }, /* @__PURE__ */ React.createElement("div", { className: "ls-row" }, /* @__PURE__ */ React.createElement("span", null, "\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(gross))), /* @__PURE__ */ React.createElement("div", { className: "ls-row" }, /* @__PURE__ */ React.createElement("span", null, "\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(fee), " (", feePercentDisplay.toFixed(1), "%)")), /* @__PURE__ */ React.createElement("div", { className: "ls-row" }, /* @__PURE__ */ React.createElement("span", null, "\u0E04\u0E39\u0E1B\u0E2D\u0E07"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(coupon))), /* @__PURE__ */ React.createElement("div", { className: "ls-row" }, /* @__PURE__ */ React.createElement("span", null, "\u0E15\u0E49\u0E19\u0E17\u0E38\u0E19"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(cost), " (", costPercent.toFixed(1), "%)")), /* @__PURE__ */ React.createElement("div", { className: "ls-row ls-profit" }, /* @__PURE__ */ React.createElement("span", null, "\u0E01\u0E33\u0E44\u0E23"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(profit), " (", profitPercent.toFixed(1), "%)"))), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", disabled: !canSubmit, onClick: submit }, /* @__PURE__ */ React.createElement(Check, { size: 16 }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E02\u0E32\u0E22"));
+  ))), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), /* @__PURE__ */ React.createElement("input", { type: "date", value: date, onChange: (e) => setDate(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "live-summary" }, /* @__PURE__ */ React.createElement("div", { className: "ls-row" }, /* @__PURE__ */ React.createElement("span", null, "\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(gross))), /* @__PURE__ */ React.createElement("div", { className: "ls-row" }, /* @__PURE__ */ React.createElement("span", null, "\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(fee))), /* @__PURE__ */ React.createElement("div", { className: "ls-row" }, /* @__PURE__ */ React.createElement("span", null, "\u0E04\u0E39\u0E1B\u0E2D\u0E07"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(coupon))), /* @__PURE__ */ React.createElement("div", { className: "ls-row" }, /* @__PURE__ */ React.createElement("span", null, "\u0E15\u0E49\u0E19\u0E17\u0E38\u0E19"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(cost))), /* @__PURE__ */ React.createElement("div", { className: "ls-row ls-profit" }, /* @__PURE__ */ React.createElement("span", null, "\u0E01\u0E33\u0E44\u0E23"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(profit)))), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", disabled: !canSubmit, onClick: submit }, /* @__PURE__ */ React.createElement(Check, { size: 16 }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E02\u0E32\u0E22"));
 }
 function ImportModal({ products, platforms, onClose, onImport }) {
   const [step, setStep] = useState(1);
@@ -653,17 +607,9 @@ function ImportModal({ products, platforms, onClose, onImport }) {
     header.map((h, i) => /* @__PURE__ */ React.createElement("option", { key: i, value: i }, "\u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C ", i + 1, ": ", h || "(\u0E27\u0E48\u0E32\u0E07)"))
   )))), !mappingValid && /* @__PURE__ */ React.createElement("div", { className: "mini-empty", style: { padding: "0 0 10px", textAlign: "left" } }, "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A \u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32 / \u0E08\u0E33\u0E19\u0E27\u0E19 / \u0E23\u0E32\u0E04\u0E32 \u0E43\u0E2B\u0E49\u0E04\u0E23\u0E1A\u0E01\u0E48\u0E2D\u0E19\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32"), /* @__PURE__ */ React.createElement("div", { className: "preview-table-wrap" }, /* @__PURE__ */ React.createElement("table", { className: "preview-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, header.map((h, i) => /* @__PURE__ */ React.createElement("th", { key: i }, h)))), /* @__PURE__ */ React.createElement("tbody", null, dataRows.slice(0, 5).map((r, i) => /* @__PURE__ */ React.createElement("tr", { key: i }, r.map((c, j) => /* @__PURE__ */ React.createElement("td", { key: j }, c))))))), /* @__PURE__ */ React.createElement("div", { className: "modal-actions" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: () => setStep(1) }, "\u0E22\u0E49\u0E2D\u0E19\u0E01\u0E25\u0E31\u0E1A"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", disabled: !mappingValid, onClick: runImport }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"))), step === 3 && result && /* @__PURE__ */ React.createElement("div", { className: "modal-body import-result" }, /* @__PURE__ */ React.createElement("div", { className: "result-icon" }, /* @__PURE__ */ React.createElement(Check, { size: 30, strokeWidth: 2.4 })), /* @__PURE__ */ React.createElement("div", { className: "result-title" }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08"), /* @__PURE__ */ React.createElement("div", { className: "result-line" }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32 ", result.imported, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), result.skipped > 0 && /* @__PURE__ */ React.createElement("div", { className: "result-line muted" }, "\u0E02\u0E49\u0E32\u0E21 ", result.skipped, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), result.notFound > 0 && /* @__PURE__ */ React.createElement("div", { className: "result-line muted" }, "\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E44\u0E21\u0E48\u0E1E\u0E1A ", result.notFound, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), /* @__PURE__ */ React.createElement("div", { className: "modal-actions" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: onClose }, "\u0E01\u0E25\u0E31\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E2B\u0E25\u0E31\u0E01"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: onClose }, "\u0E14\u0E39\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E02\u0E32\u0E22")))));
 }
-function SalesPage({ products, platforms, sales, onAddSale, onImport, onDeleteSale }) {
+function SalesPage({ products, platforms, sales, onAddSale, onImport }) {
   const [showImport, setShowImport] = useState(false);
-  return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(Header, { title: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E02\u0E32\u0E22", subtitle: fmtNumber(sales.length) + " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14", lowStockCount: 0 }), /* @__PURE__ */ React.createElement("div", { className: "sales-toolbar" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-block", onClick: () => setShowImport(true) }, /* @__PURE__ */ React.createElement(Upload, { size: 16 }), " Import Orders")), /* @__PURE__ */ React.createElement(QuickSaleForm, { products, platforms, onSubmit: onAddSale }), /* @__PURE__ */ React.createElement(
-    SalesHistoryList,
-    {
-      sales,
-      products,
-      platforms,
-      onDeleteSale
-    }
-  ), showImport && /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(Header, { title: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E02\u0E32\u0E22", subtitle: fmtNumber(sales.length) + " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14", lowStockCount: 0 }), /* @__PURE__ */ React.createElement("div", { className: "sales-toolbar" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-block", onClick: () => setShowImport(true) }, /* @__PURE__ */ React.createElement(Upload, { size: 16 }), " Import Orders")), /* @__PURE__ */ React.createElement(QuickSaleForm, { products, platforms, onSubmit: onAddSale }), showImport && /* @__PURE__ */ React.createElement(
     ImportModal,
     {
       products,
@@ -673,43 +619,6 @@ function SalesPage({ products, platforms, sales, onAddSale, onImport, onDeleteSa
     }
   ));
 }
-function SalesHistoryList({ sales, products, platforms, onDeleteSale }) {
-  const [query, setQuery] = useState("");
-  const [confirmId, setConfirmId] = useState(null);
-  const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
-  const platformMap = Object.fromEntries(platforms.map((p) => [p.id, p]));
-  const rows = [...sales].sort((a, b) => new Date(b.date) - new Date(a.date)).filter((s) => {
-    if (!query) return true;
-    const p = productMap[s.productId];
-    const pl = platformMap[s.platformId];
-    const haystack = `${p?.name || ""} ${p?.sku || ""} ${pl?.name || ""}`.toLowerCase();
-    return haystack.includes(query.toLowerCase());
-  });
-  return /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-head" }, /* @__PURE__ */ React.createElement("div", { className: "section-title" }, "\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E02\u0E32\u0E22\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14")), /* @__PURE__ */ React.createElement("div", { className: "field", style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      value: query,
-      onChange: (e) => setQuery(e.target.value),
-      placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32 \u0E2B\u0E23\u0E37\u0E2D Platform..."
-    }
-  )), rows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48\u0E15\u0E23\u0E07\u0E01\u0E31\u0E1A\u0E01\u0E32\u0E23\u0E04\u0E49\u0E19\u0E2B\u0E32") : /* @__PURE__ */ React.createElement("div", { className: "tx-list" }, rows.map((s) => {
-    const p = productMap[s.productId];
-    const pl = platformMap[s.platformId];
-    const m = computeSaleMetrics(s, p, pl);
-    const isConfirming = confirmId === s.id;
-    return /* @__PURE__ */ React.createElement("div", { className: "tx-row", key: s.id }, /* @__PURE__ */ React.createElement("span", { className: "tx-dot", style: { background: pl?.color || "#999" } }), /* @__PURE__ */ React.createElement("div", { className: "tx-info" }, /* @__PURE__ */ React.createElement("div", { className: "tx-name" }, p?.name || "\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E44\u0E21\u0E48\u0E1E\u0E1A"), /* @__PURE__ */ React.createElement("div", { className: "tx-sub" }, pl?.name, " \xB7 ", fmtDateShort(s.date), " \xB7 x", s.quantity)), /* @__PURE__ */ React.createElement("div", { className: "tx-figures" }, /* @__PURE__ */ React.createElement("div", { className: "tx-gross" }, fmtCurrency(m.gross)), /* @__PURE__ */ React.createElement("div", { className: "tx-profit" }, "\u0E01\u0E33\u0E44\u0E23 ", fmtCurrency(m.profit))), isConfirming ? /* @__PURE__ */ React.createElement("div", { className: "tx-confirm" }, /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        className: "btn-tx-confirm danger",
-        onClick: () => {
-          onDeleteSale(s.id);
-          setConfirmId(null);
-        }
-      },
-      "\u0E25\u0E1A"
-    ), /* @__PURE__ */ React.createElement("button", { className: "btn-tx-confirm", onClick: () => setConfirmId(null) }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01")) : /* @__PURE__ */ React.createElement("button", { className: "icon-btn-sm tx-delete", onClick: () => setConfirmId(s.id) }, /* @__PURE__ */ React.createElement(Trash2, { size: 14 })));
-  })));
-}
 function ProductForm({ initial, onSave, onClose }) {
   const [name, setName] = useState(initial?.name || "");
   const [sku, setSku] = useState(initial?.sku || "");
@@ -717,28 +626,6 @@ function ProductForm({ initial, onSave, onClose }) {
   const [price, setPrice] = useState(initial?.price ?? "");
   const [stock, setStock] = useState(initial?.stock ?? "");
   const [lowStockThreshold, setLowStockThreshold] = useState(initial?.lowStockThreshold ?? 5);
-  const [costMode, setCostMode] = useState("amount");
-  const [costPercentInput, setCostPercentInput] = useState(
-    initial?.price ? String(Math.round(initial.cost / initial.price * 1e3) / 10) : ""
-  );
-  useEffect(() => {
-    if (costMode === "percent") {
-      const p = parseFloat(price) || 0;
-      const pct = parseFloat(costPercentInput) || 0;
-      setCost(p > 0 ? (Math.round(p * pct) / 100).toString() : "");
-    }
-  }, [costPercentInput, price, costMode]);
-  useEffect(() => {
-    if (costMode === "amount") {
-      const p = parseFloat(price) || 0;
-      const c = parseFloat(cost) || 0;
-      setCostPercentInput(p > 0 ? (Math.round(c / p * 1e3) / 10).toString() : "");
-    }
-  }, [cost, price, costMode]);
-  const priceNum = parseFloat(price) || 0;
-  const costNum = parseFloat(cost) || 0;
-  const marginPerUnit = priceNum - costNum;
-  const marginPercent = priceNum > 0 ? marginPerUnit / priceNum * 100 : 0;
   const canSave = name && sku && cost !== "" && price !== "" && stock !== "";
   function save() {
     if (!canSave) return;
@@ -752,31 +639,7 @@ function ProductForm({ initial, onSave, onClose }) {
       lowStockThreshold: parseFloat(lowStockThreshold) || 5
     });
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-head" }, /* @__PURE__ */ React.createElement("div", { className: "modal-title" }, initial ? "\u0E41\u0E01\u0E49\u0E44\u0E02\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32" : "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), /* @__PURE__ */ React.createElement("button", { className: "icon-btn", onClick: onClose }, /* @__PURE__ */ React.createElement(X, { size: 18 }))), /* @__PURE__ */ React.createElement("div", { className: "modal-body" }, /* @__PURE__ */ React.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), /* @__PURE__ */ React.createElement("input", { value: name, onChange: (e) => setName(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "SKU"), /* @__PURE__ */ React.createElement("input", { value: sku, onChange: (e) => setSku(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("div", { className: "field-label-row" }, /* @__PURE__ */ React.createElement("span", null, "\u0E15\u0E49\u0E19\u0E17\u0E38\u0E19"), /* @__PURE__ */ React.createElement("div", { className: "unit-toggle" }, /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      className: costMode === "amount" ? "active" : "",
-      onClick: () => setCostMode("amount")
-    },
-    "\u0E3F"
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      className: costMode === "percent" ? "active" : "",
-      onClick: () => setCostMode("percent")
-    },
-    "%"
-  ))), costMode === "amount" ? /* @__PURE__ */ React.createElement("input", { type: "number", value: cost, onChange: (e) => setCost(e.target.value) }) : /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      value: costPercentInput,
-      onChange: (e) => setCostPercentInput(e.target.value),
-      placeholder: "% \u0E02\u0E2D\u0E07\u0E23\u0E32\u0E04\u0E32\u0E02\u0E32\u0E22"
-    }
-  ), /* @__PURE__ */ React.createElement("span", { className: "field-hint" }, costMode === "amount" ? `= ${costPercentInput || 0}% \u0E02\u0E2D\u0E07\u0E23\u0E32\u0E04\u0E32\u0E02\u0E32\u0E22` : `= ${fmtCurrency(costNum)}`)), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E23\u0E32\u0E04\u0E32\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("input", { type: "number", value: price, onChange: (e) => setPrice(e.target.value) }), /* @__PURE__ */ React.createElement("span", { className: `field-hint ${marginPerUnit >= 0 ? "positive" : "negative"}` }, "\u0E01\u0E33\u0E44\u0E23/\u0E0A\u0E34\u0E49\u0E19 ", fmtCurrency(marginPerUnit), " (", marginPercent.toFixed(1), "%)"))), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E2A\u0E15\u0E47\u0E2D\u0E01"), /* @__PURE__ */ React.createElement("input", { type: "number", value: stock, onChange: (e) => setStock(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E40\u0E2B\u0E25\u0E37\u0E2D"), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-head" }, /* @__PURE__ */ React.createElement("div", { className: "modal-title" }, initial ? "\u0E41\u0E01\u0E49\u0E44\u0E02\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32" : "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), /* @__PURE__ */ React.createElement("button", { className: "icon-btn", onClick: onClose }, /* @__PURE__ */ React.createElement(X, { size: 18 }))), /* @__PURE__ */ React.createElement("div", { className: "modal-body" }, /* @__PURE__ */ React.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), /* @__PURE__ */ React.createElement("input", { value: name, onChange: (e) => setName(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "SKU"), /* @__PURE__ */ React.createElement("input", { value: sku, onChange: (e) => setSku(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E15\u0E49\u0E19\u0E17\u0E38\u0E19"), /* @__PURE__ */ React.createElement("input", { type: "number", value: cost, onChange: (e) => setCost(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E23\u0E32\u0E04\u0E32\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("input", { type: "number", value: price, onChange: (e) => setPrice(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E2A\u0E15\u0E47\u0E2D\u0E01"), /* @__PURE__ */ React.createElement("input", { type: "number", value: stock, onChange: (e) => setStock(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E40\u0E2B\u0E25\u0E37\u0E2D"), /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
@@ -904,6 +767,26 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
     )), /* @__PURE__ */ React.createElement("div", { className: "margin-pct" }, margin.toFixed(0), "%"));
   }))));
 }
+function LoginScreen({ onLogin }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit() {
+    setBusy(true); setErr("");
+    try { onLogin(await signIn(email.trim(), password)); }
+    catch (e) { setErr(e.message || "เข้าสู่ระบบไม่สำเร็จ"); }
+    setBusy(false);
+  }
+  const box = { width: "100%", boxSizing: "border-box", padding: 12, marginBottom: 10, borderRadius: 10, border: "1px solid #ccd", fontSize: 16 };
+  return React.createElement("div", { style: { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F6F7F5", fontFamily: "-apple-system, sans-serif" } },
+    React.createElement("div", { style: { width: 300 } },
+      React.createElement("div", { style: { fontSize: 20, fontWeight: 800, color: "#0F2B26", marginBottom: 14 } }, "MIES \u2013 \u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A"),
+      React.createElement("input", { style: box, type: "email", placeholder: "Email", value: email, onChange: (e) => setEmail(e.target.value) }),
+      React.createElement("input", { style: box, type: "password", placeholder: "Password", value: password, onChange: (e) => setPassword(e.target.value), onKeyDown: (e) => e.key === "Enter" && submit() }),
+      err && React.createElement("div", { style: { color: "#B42318", fontSize: 13, marginBottom: 8 } }, err),
+      React.createElement("button", { className: "btn btn-primary btn-block", disabled: busy || !email || !password, onClick: submit }, busy ? "..." : "Login")));
+}
 var STORAGE_KEY = "mies_dashboard_v1";
 function loadStoredState() {
   try {
@@ -925,32 +808,50 @@ function App() {
     preset: "7d",
     customRange: { start: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), end: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10) }
   });
+  const cloudOn = cloudConfigured();
+  const [session, setSession] = useState(cloudOn ? getSession() : null);
+  const [ready, setReady] = useState(!cloudOn);
+  const [syncMsg, setSyncMsg] = useState("");
+  function handleAuthError(e) {
+    if (e && e.message === "session expired") { signOut(); setSession(null); setReady(false); return true; }
+    return false;
+  }
+  useEffect(() => {
+    if (!cloudOn || !session) return;
+    let cancelled = false;
+    setSyncMsg("\u0E01\u0E33\u0E25\u0E31\u0E07\u0E42\u0E2B\u0E25\u0E14\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u2026");
+    loadRemote().then((remote) => {
+      if (cancelled) return;
+      if (remote) { setProducts(remote.products || []); setSales(remote.sales || []); }
+      else if (products.length || sales.length) { saveRemote({ products, sales }).catch(() => {}); }
+      setReady(true); setSyncMsg("");
+    }).catch((e) => {
+      if (cancelled || handleAuthError(e)) return;
+      setSyncMsg("\u0E2D\u0E2D\u0E1F\u0E44\u0E25\u0E19\u0E4C \u2013 \u0E43\u0E0A\u0E49\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07 (\u0E23\u0E35\u0E40\u0E1F\u0E23\u0E0A\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E2D\u0E2D\u0E19\u0E44\u0E25\u0E19\u0E4C)");
+    });
+    return () => { cancelled = true; };
+  }, [session]);
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ products, sales }));
     } catch (e) {
       console.warn("Could not save data", e);
     }
-  }, [products, sales]);
+    if (!cloudOn || !session || !ready) return;
+    const t = setTimeout(() => {
+      setSyncMsg("\u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u2026");
+      saveRemote({ products, sales })
+        .then(() => setSyncMsg("\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2D\u0E2D\u0E19\u0E44\u0E25\u0E19\u0E4C\u0E41\u0E25\u0E49\u0E27 \u2713"))
+        .catch((e) => { if (!handleAuthError(e)) setSyncMsg("\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2D\u0E2D\u0E19\u0E44\u0E25\u0E19\u0E4C\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08"); });
+    }, 800);
+    return () => clearTimeout(t);
+  }, [products, sales, session, ready]);
   const lowStockCount = products.filter((p) => getStockStatus(p) !== "\u0E1B\u0E01\u0E15\u0E34").length;
   function handleAddSale(sale) {
     setSales((prev) => [...prev, sale]);
     setProducts(
       (prev) => prev.map((p) => p.id === sale.productId ? { ...p, stock: p.stock - sale.quantity } : p)
     );
-  }
-  function handleDeleteSale(id) {
-    setSales((prev) => {
-      const target = prev.find((s) => s.id === id);
-      if (target) {
-        setProducts(
-          (pprev) => pprev.map(
-            (p) => p.id === target.productId ? { ...p, stock: p.stock + target.quantity } : p
-          )
-        );
-      }
-      return prev.filter((s) => s.id !== id);
-    });
   }
   function handleImport(newSales, stockDelta) {
     setSales((prev) => [...prev, ...newSales]);
@@ -967,7 +868,8 @@ function App() {
   function handleDeleteProduct(id) {
     setProducts((prev) => prev.filter((p) => p.id !== id));
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "mies-app" }, /* @__PURE__ */ React.createElement("style", null, CSS), /* @__PURE__ */ React.createElement("div", { className: "app-shell" }, /* @__PURE__ */ React.createElement(Sidebar, { active: activeTab, onChange: setActiveTab, lowStockCount }), /* @__PURE__ */ React.createElement("main", { className: "main-content" }, activeTab === "dashboard" && /* @__PURE__ */ React.createElement(
+  if (cloudOn && !session) return /* @__PURE__ */ React.createElement("div", { className: "mies-app" }, /* @__PURE__ */ React.createElement("style", null, CSS), /* @__PURE__ */ React.createElement(LoginScreen, { onLogin: setSession }));
+  return /* @__PURE__ */ React.createElement("div", { className: "mies-app" }, /* @__PURE__ */ React.createElement("style", null, CSS), cloudOn && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: "calc(env(safe-area-inset-top, 0px) + 4px)", right: 8, zIndex: 50, fontSize: 11, color: "#68706B", background: "rgba(255,255,255,.85)", padding: "2px 8px", borderRadius: 8 } }, syncMsg, " ", /* @__PURE__ */ React.createElement("a", { href: "#", style: { color: "#0F2B26" }, onClick: (e) => { e.preventDefault(); signOut(); setSession(null); setReady(false); } }, "\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E30\u0E1A\u0E1A")), /* @__PURE__ */ React.createElement("div", { className: "app-shell" }, /* @__PURE__ */ React.createElement(Sidebar, { active: activeTab, onChange: setActiveTab, lowStockCount }), /* @__PURE__ */ React.createElement("main", { className: "main-content" }, activeTab === "dashboard" && /* @__PURE__ */ React.createElement(
     Dashboard,
     {
       sales,
@@ -984,8 +886,7 @@ function App() {
       platforms,
       sales,
       onAddSale: handleAddSale,
-      onImport: handleImport,
-      onDeleteSale: handleDeleteSale
+      onImport: handleImport
     }
   ), activeTab === "products" && /* @__PURE__ */ React.createElement(ProductsPage, { products, onSave: handleSaveProduct, onDelete: handleDeleteProduct }), activeTab === "analytics" && /* @__PURE__ */ React.createElement(
     AnalyticsPage,
@@ -1145,11 +1046,6 @@ var CSS = `
 .tx-figures { text-align: right; flex-shrink: 0; }
 .tx-gross { font-size: 13.5px; font-weight: 700; }
 .tx-profit { font-size: 11px; color: var(--success); }
-.tx-delete { flex-shrink: 0; }
-.tx-delete:hover { color: #d0342c; border-color: #d0342c; }
-.tx-confirm { display: flex; gap: 6px; flex-shrink: 0; }
-.btn-tx-confirm { border: 1px solid var(--border); background: var(--card); color: var(--text-secondary); font-size: 11px; font-weight: 700; padding: 6px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
-.btn-tx-confirm.danger { background: #d0342c; border-color: #d0342c; color: #fff; }
 
 /* Buttons */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 12px; font-size: 13.5px; font-weight: 600; padding: 11px 16px; cursor: pointer; border: 1px solid transparent; font-family: inherit; min-height: 44px; transition: opacity 0.15s, transform 0.05s; }
@@ -1176,13 +1072,6 @@ var CSS = `
 .field span { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .field input, .field select { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 14px; font-family: inherit; background: var(--card); color: var(--text); min-height: 44px; width: 100%; }
 .field input:focus, .field select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.unit-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.unit-toggle button { border: none; background: var(--card); color: var(--text-secondary); font-size: 11px; font-weight: 700; padding: 3px 8px; cursor: pointer; line-height: 1.4; }
-.unit-toggle button.active { background: var(--primary); color: #fff; }
-.field-hint { font-size: 11.5px; color: var(--text-secondary); margin-top: 2px; }
-.field-hint.positive { color: #1a8a4a; }
-.field-hint.negative { color: #d0342c; }
 
 .live-summary { background: var(--bg); border-radius: 14px; padding: 13px 14px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
 .ls-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-secondary); }
