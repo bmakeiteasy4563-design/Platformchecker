@@ -400,7 +400,7 @@ function Dashboard({ sales, products, platforms, dateState, setDateState, onGoto
   return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(
     Header,
     {
-      title: "MIES Enterprise",
+      title: "MIES TRADING",
       subtitle: "Sales Overview",
       lowStockCount: products.filter((p) => getStockStatus(p) !== "\u0E1B\u0E01\u0E15\u0E34").length
     }
