@@ -38,7 +38,7 @@ var DEFAULT_PLATFORMS = [
   { id: "shopee", name: "Shopee", color: "#EE4D2D", feePercent: 5 },
   { id: "lazada", name: "Lazada", color: "#0F146D", feePercent: 4 },
   { id: "tiktok", name: "TikTok Shop", color: "#111111", feePercent: 3.5 },
-  { id: "shopee jja", name: "shopee jja", color: "#1877F2", feePercent: 0 },
+  { id: "facebook", name: "Facebook", color: "#1877F2", feePercent: 0 },
   { id: "lineoa", name: "Line OA", color: "#06C755", feePercent: 0 },
   { id: "offline", name: "\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E49\u0E32\u0E19/\u0E2D\u0E37\u0E48\u0E19\u0E46", color: "#B8862F", feePercent: 0 }
 ];
@@ -159,7 +159,7 @@ function getStockStatus(p) {
   return "\u0E1B\u0E01\u0E15\u0E34";
 }
 function Sidebar({ active, onChange, lowStockCount }) {
-  return /* @__PURE__ */ React.createElement("aside", { className: "sidebar" }, /* @__PURE__ */ React.createElement("div", { className: "sidebar-brand" }, /* @__PURE__ */ React.createElement("div", { className: "brand-mark" }, "M"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "brand-name" }, "MIES Enterprise"), /* @__PURE__ */ React.createElement("div", { className: "brand-sub" }, "Sales Dashboard"))), /* @__PURE__ */ React.createElement("nav", { className: "sidebar-nav" }, NAV_ITEMS.map((item) => /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("aside", { className: "sidebar" }, /* @__PURE__ */ React.createElement("div", { className: "sidebar-brand" }, /* @__PURE__ */ React.createElement("div", { className: "brand-mark" }, "M"), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "brand-name" }, "MIES TRADING"), /* @__PURE__ */ React.createElement("div", { className: "brand-sub" }, "Sales Dashboard"))), /* @__PURE__ */ React.createElement("nav", { className: "sidebar-nav" }, NAV_ITEMS.map((item) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: item.id,
@@ -388,7 +388,7 @@ function Dashboard({ sales, products, platforms, dateState, setDateState, onGoto
   const previous = aggregate(prevSales, products, platforms);
   const hasBaseline = prevSales.length > 0;
   if (sales.length === 0) {
-    return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(Header, { title: "MIES Enterprise", subtitle: "Sales Overview", lowStockCount: 0 }), /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(Header, { title: "MIES TRADING", subtitle: "Sales Overview", lowStockCount: 0 }), /* @__PURE__ */ React.createElement(
       EmptyState,
       {
         icon: BarChart2,
@@ -402,7 +402,7 @@ function Dashboard({ sales, products, platforms, dateState, setDateState, onGoto
   return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(
     Header,
     {
-      title: "MIES Enterprise",
+      title: "MIES TRADING",
       subtitle: "Sales Overview",
       lowStockCount: products.filter((p) => getStockStatus(p) !== "\u0E1B\u0E01\u0E15\u0E34").length
     }

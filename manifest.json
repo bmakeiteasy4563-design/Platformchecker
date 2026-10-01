@@ -1,7 +1,7 @@
 {
-  "name": "MIES Enterprise - Sales Dashboard",
+  "name": "MIES TRADING - Sales Dashboard",
   "short_name": "MIES",
-  "description": "Sales, product and profit dashboard for MIES Enterprise",
+  "description": "Sales, product and profit dashboard for MIES TRADING",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
