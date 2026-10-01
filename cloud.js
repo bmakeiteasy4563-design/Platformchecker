@@ -1,7 +1,7 @@
 // ===== ตั้งค่า Supabase (ใส่ 2 ค่านี้ตามขั้นตอนในไฟล์ supabase-setup.sql) =====
 export const CLOUD = {
-  url: "",      // เช่น https://abcdxyz.supabase.co
-  anonKey: "",  // Project Settings > API > anon public key
+  url: "https://ywecvnlckxpbunmfhlpa.supabase.co",      // เช่น https://abcdxyz.supabase.co
+  anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl3ZWN2bmxja3hwYnVubWZobHBhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3OTQxMDQsImV4cCI6MjEwNjM3MDEwNH0.GgcN0NL7dzIR568jfMcwZlB_T2F2whpccVUTVWFCobA",  // Project Settings > API > anon public key
 };
 // ============================================================================
 const SKEY = "mies_session";
