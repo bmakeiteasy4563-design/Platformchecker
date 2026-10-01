@@ -38,7 +38,7 @@ var DEFAULT_PLATFORMS = [
   { id: "shopee", name: "Shopee", color: "#EE4D2D", feePercent: 5 },
   { id: "lazada", name: "Lazada", color: "#0F146D", feePercent: 4 },
   { id: "tiktok", name: "TikTok Shop", color: "#111111", feePercent: 3.5 },
-  { id: "shopee jja", name: "Shopee jja", color: "#1877F2", feePercent: 0 },
+  { id: "facebook", name: "Facebook", color: "#1877F2", feePercent: 0 },
   { id: "lineoa", name: "Line OA", color: "#06C755", feePercent: 0 },
   { id: "offline", name: "\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E49\u0E32\u0E19/\u0E2D\u0E37\u0E48\u0E19\u0E46", color: "#B8862F", feePercent: 0 }
 ];
@@ -354,7 +354,7 @@ function TopProducts({ sales, products }) {
     });
     return Object.values(byProduct).sort((a, b) => b.gross - a.gross).slice(0, 5);
   }, [sales, products]);
-  return /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-head" }, /* @__PURE__ */ React.createElement("div", { className: "section-title" }, "\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E02\u0E32\u0E22\u0E14\u0E35")), rows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E02\u0E32\u0E22\u0E14\u0E35") : /* @__PURE__ */ React.createElement("div", { className: "top-product-list" }, rows.map((r, i) => /* @__PURE__ */ React.createElement("div", { className: "top-product-row", key: r.product.id }, /* @__PURE__ */ React.createElement("div", { className: "rank-chip" }, i + 1), /* @__PURE__ */ React.createElement("div", { className: "tp-info" }, /* @__PURE__ */ React.createElement("div", { className: "tp-name" }, r.product.name), /* @__PURE__ */ React.createElement("div", { className: "tp-sub" }, fmtNumber(r.qty), " \u0E0A\u0E34\u0E49\u0E19")), /* @__PURE__ */ React.createElement("div", { className: "tp-figures" }, /* @__PURE__ */ React.createElement("div", { className: "tp-gross" }, fmtCurrency(r.gross)), /* @__PURE__ */ React.createElement("div", { className: "tp-profit" }, "\u0E01\u0E33\u0E44\u0E23 ", fmtCurrency(r.profit)))))));
+  return /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-head" }, /* @__PURE__ */ React.createElement("div", { className: "section-title" }, "\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E02\u0E32\u0E22\u0E14\u0E35")), rows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E02\u0E32\u0E22\u0E14\u0E35") : /* @__PURE__ */ React.createElement("div", { className: "top-product-list" }, rows.map((r, i) => /* @__PURE__ */ React.createElement("div", { className: "top-product-row", key: r.product.id }, /* @__PURE__ */ React.createElement("div", { className: "rank-chip" }, i + 1), /* @__PURE__ */ React.createElement("div", { className: "tp-info" }, /* @__PURE__ */ React.createElement("div", { className: "tp-name" }, r.product.name), /* @__PURE__ */ React.createElement("div", { className: "tp-sub" }, fmtNumber(r.qty), " \u0E0A\u0E34\u0E49\u0E19")), /* @__PURE__ */ React.createElement("div", { className: "tp-figures" }, /* @__PURE__ */ React.createElement("div", { className: "tp-gross" }, fmtCurrency(r.gross)), /* @__PURE__ */ React.createElement("div", { className: "tp-profit" }, "\u0E01\u0E33\u0E44\u0E23 ", fmtCurrency(r.profit), r.gross > 0 ? " (" + (Math.round(r.profit / r.gross * 1000) / 10) + "%)" : ""))))));
 }
 function LowStockAlert({ products, onNavigate }) {
   const lowStock = products.filter((p) => getStockStatus(p) !== "\u0E1B\u0E01\u0E15\u0E34");
@@ -845,7 +845,7 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
         className: "margin-bar-fill",
         style: { width: Math.max(margin, 2) + "%" }
       }
-    )), /* @__PURE__ */ React.createElement("div", { className: "margin-pct" }, margin.toFixed(0), "%"));
+    )), /* @__PURE__ */ React.createElement("div", { className: "margin-pct" }, margin.toFixed(1), "%"));
   }))));
 }
 function LoginScreen({ onLogin }) {
@@ -1245,7 +1245,7 @@ var CSS = `
 .margin-name { font-size: 12.5px; font-weight: 600; width: 84px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .margin-bar-track { flex: 1; height: 7px; background: var(--bg); border-radius: 20px; overflow: hidden; }
 .margin-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-light)); border-radius: 20px; }
-.margin-pct { font-size: 12px; font-weight: 700; width: 34px; text-align: right; flex-shrink: 0; }
+.margin-pct { font-size: 12px; font-weight: 700; width: 48px; text-align: right; flex-shrink: 0; }
 
 /* Responsive */
 @media (min-width: 900px) {
