@@ -886,7 +886,7 @@ function App() {
   const [sales, setSales] = useState(stored?.sales || []);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [dateState, setDateState] = useState({
-    preset: "7d",
+    preset: "today",
     customRange: { start: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), end: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10) }
   });
   const cloudOn = cloudConfigured();
