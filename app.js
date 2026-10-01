@@ -619,8 +619,49 @@ function SalesPage({ products, platforms, sales, onAddSale, onImport }) {
     }
   ));
 }
+function compressImage(file, maxSide = 240, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image load failed")); };
+    img.src = url;
+  });
+}
+function ProductImageField({ value, onChange }) {
+  const [busy, setBusy] = useState(false);
+  async function pick(e) {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    try { onChange(await compressImage(f)); } catch (err) { alert("\u0E40\u0E1B\u0E34\u0E14\u0E23\u0E39\u0E1B\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49"); }
+    setBusy(false);
+  }
+  return React.createElement("div", { className: "field" },
+    React.createElement("span", null, "\u0E23\u0E39\u0E1B\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"),
+    React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12 } },
+      React.createElement("div", { style: { width: 72, height: 72, borderRadius: 12, background: "#F1F3F0", border: "1px solid #E1E5E0", overflow: "hidden", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#99A09B", fontSize: 11 } },
+        value ? React.createElement("img", { src: value, alt: "", style: { width: "100%", height: "100%", objectFit: "cover" } }) : "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E39\u0E1B"),
+      React.createElement("label", { className: "btn btn-ghost", style: { cursor: "pointer" } },
+        busy ? "..." : value ? "\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E23\u0E39\u0E1B" : "\u0E40\u0E25\u0E37\u0E2D\u0E01/\u0E16\u0E48\u0E32\u0E22\u0E23\u0E39\u0E1B",
+        React.createElement("input", { type: "file", accept: "image/*", onChange: pick, style: { display: "none" } })),
+      value && React.createElement("button", { type: "button", className: "btn btn-ghost", onClick: () => onChange("") }, "\u0E25\u0E1A")));
+}
 function ProductForm({ initial, onSave, onClose }) {
   const [name, setName] = useState(initial?.name || "");
+  const [image, setImage] = useState(initial?.image || "");
   const [sku, setSku] = useState(initial?.sku || "");
   const [cost, setCost] = useState(initial?.cost ?? "");
   const [price, setPrice] = useState(initial?.price ?? "");
@@ -636,10 +677,11 @@ function ProductForm({ initial, onSave, onClose }) {
       cost: parseFloat(cost),
       price: parseFloat(price),
       stock: parseFloat(stock),
-      lowStockThreshold: parseFloat(lowStockThreshold) || 5
+      lowStockThreshold: parseFloat(lowStockThreshold) || 5,
+      image
     });
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-head" }, /* @__PURE__ */ React.createElement("div", { className: "modal-title" }, initial ? "\u0E41\u0E01\u0E49\u0E44\u0E02\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32" : "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), /* @__PURE__ */ React.createElement("button", { className: "icon-btn", onClick: onClose }, /* @__PURE__ */ React.createElement(X, { size: 18 }))), /* @__PURE__ */ React.createElement("div", { className: "modal-body" }, /* @__PURE__ */ React.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), /* @__PURE__ */ React.createElement("input", { value: name, onChange: (e) => setName(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "SKU"), /* @__PURE__ */ React.createElement("input", { value: sku, onChange: (e) => setSku(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E15\u0E49\u0E19\u0E17\u0E38\u0E19"), /* @__PURE__ */ React.createElement("input", { type: "number", value: cost, onChange: (e) => setCost(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E23\u0E32\u0E04\u0E32\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("input", { type: "number", value: price, onChange: (e) => setPrice(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E2A\u0E15\u0E47\u0E2D\u0E01"), /* @__PURE__ */ React.createElement("input", { type: "number", value: stock, onChange: (e) => setStock(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E40\u0E2B\u0E25\u0E37\u0E2D"), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-head" }, /* @__PURE__ */ React.createElement("div", { className: "modal-title" }, initial ? "\u0E41\u0E01\u0E49\u0E44\u0E02\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32" : "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), /* @__PURE__ */ React.createElement("button", { className: "icon-btn", onClick: onClose }, /* @__PURE__ */ React.createElement(X, { size: 18 }))), /* @__PURE__ */ React.createElement("div", { className: "modal-body" }, /* @__PURE__ */ React.createElement("div", { className: "form-grid" }, /* @__PURE__ */ React.createElement(ProductImageField, { value: image, onChange: setImage }), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), /* @__PURE__ */ React.createElement("input", { value: name, onChange: (e) => setName(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "SKU"), /* @__PURE__ */ React.createElement("input", { value: sku, onChange: (e) => setSku(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E15\u0E49\u0E19\u0E17\u0E38\u0E19"), /* @__PURE__ */ React.createElement("input", { type: "number", value: cost, onChange: (e) => setCost(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E23\u0E32\u0E04\u0E32\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("input", { type: "number", value: price, onChange: (e) => setPrice(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "field-row" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E2A\u0E15\u0E47\u0E2D\u0E01"), /* @__PURE__ */ React.createElement("input", { type: "number", value: stock, onChange: (e) => setStock(e.target.value) })), /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E40\u0E2B\u0E25\u0E37\u0E2D"), /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
@@ -696,7 +738,7 @@ function ProductsPage({ products, onSave, onDelete }) {
   ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E17\u0E35\u0E48\u0E04\u0E49\u0E19\u0E2B\u0E32") : /* @__PURE__ */ React.createElement("div", { className: "product-cards" }, filtered.map((p) => {
     const status = getStockStatus(p);
     const marginPerUnit = p.price - p.cost;
-    return /* @__PURE__ */ React.createElement("div", { className: "product-card", key: p.id }, /* @__PURE__ */ React.createElement("div", { className: "product-card-top" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement("div", { className: "product-sku" }, p.sku)), /* @__PURE__ */ React.createElement("div", { className: "product-actions" }, /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "product-card", key: p.id }, /* @__PURE__ */ React.createElement("div", { className: "product-card-top" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", minWidth: 0 } }, p.image ? /* @__PURE__ */ React.createElement("img", { src: p.image, alt: "", style: { width: 48, height: 48, objectFit: "cover", borderRadius: 10, flexShrink: 0, border: "1px solid #E1E5E0" } }) : null, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement("div", { className: "product-sku" }, p.sku))), /* @__PURE__ */ React.createElement("div", { className: "product-actions" }, /* @__PURE__ */ React.createElement(
       "button",
       {
         className: "icon-btn-sm",
