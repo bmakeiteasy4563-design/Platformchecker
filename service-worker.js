@@ -1,19 +1,28 @@
-const CACHE_NAME = "mies-dashboard-v9";
+const CACHE_NAME = "mies-dashboard-v10";
 
 const APP_SHELL = [
   "./",
   "./index.html",
   "./app.js",
   "./cloud.js",
-  "./icon-maskable-512.png",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
+  "./icon-maskable-512.png",
 ];
 
+// ติดตั้ง: โหลดไฟล์ใหม่จากเซิร์ฟเวอร์เสมอ (ข้ามแคชของเบราว์เซอร์) และไม่ล้มทั้งชุดถ้าไฟล์ใดไฟล์หนึ่งหาย
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(
+        APP_SHELL.map((url) =>
+          fetch(new Request(url, { cache: "reload" }))
+            .then((res) => (res.ok ? cache.put(url, res) : null))
+            .catch(() => null)
+        )
+      )
+    ).then(() => self.skipWaiting())
   );
 });
 
@@ -25,26 +34,20 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// ออนไลน์: ดึงเวอร์ชันล่าสุดก่อนเสมอ แล้วเก็บสำเนาไว้ / ออฟไลน์: ใช้สำเนาที่เก็บไว้
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
-
-  if (new URL(req.url).hostname.endsWith("supabase.co")) return;
-
-  const isSameOrigin = new URL(req.url).origin === self.location.origin;
-
-  if (isSameOrigin) {
-    event.respondWith(
-      caches.match(req).then((cached) => cached || fetch(req))
-    );
-    return;
-  }
+  const url = new URL(req.url);
+  if (url.hostname.endsWith("supabase.co")) return;
 
   event.respondWith(
-    fetch(req)
+    fetch(req, url.origin === self.location.origin ? { cache: "no-cache" } : undefined)
       .then((res) => {
-        const resClone = res.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone)).catch(() => {});
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {});
+        }
         return res;
       })
       .catch(() => caches.match(req))
