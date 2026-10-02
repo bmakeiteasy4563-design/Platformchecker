@@ -38,7 +38,7 @@ var DEFAULT_PLATFORMS = [
   { id: "shopee", name: "Shopee", color: "#EE4D2D", feePercent: 5 },
   { id: "lazada", name: "Lazada", color: "#0F146D", feePercent: 4 },
   { id: "tiktok", name: "TikTok Shop", color: "#111111", feePercent: 3.5 },
-  { id: "shopee jja", name: "Shopee jja", color: "#1877F2", feePercent: 0 },
+  { id: "facebook", name: "Facebook", color: "#1877F2", feePercent: 0 },
   { id: "lineoa", name: "Line OA", color: "#06C755", feePercent: 0 },
   { id: "offline", name: "\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E49\u0E32\u0E19/\u0E2D\u0E37\u0E48\u0E19\u0E46", color: "#B8862F", feePercent: 0 }
 ];
@@ -113,7 +113,8 @@ function computeSaleMetrics(sale, product, platform) {
   const fee = sale.fee != null ? sale.fee : gross * ((platform?.feePercent || 0) / 100);
   const otherExpense = sale.otherExpense || 0;
   const netRevenue = gross - coupon - fee - otherExpense;
-  const cost = (product?.cost || 0) * (sale.quantity || 0);
+  const unitCost = sale.unitCost != null ? sale.unitCost : product?.cost || 0;
+  const cost = unitCost * (sale.quantity || 0);
   const profit = netRevenue - cost;
   return { gross, coupon, fee, otherExpense, netRevenue, cost, profit };
 }
@@ -465,6 +466,7 @@ function QuickSaleForm({ products, platforms, onSubmit }) {
       coupon: couponNum,
       fee: r2(fee.baht),
       otherExpense: r2(other.baht),
+      unitCost: product?.cost || 0,
       date: new Date(date).toISOString()
     });
     setProductId(""); setQuantity(1); setPrice(""); setPlatformId(""); setCoupon(0);
@@ -619,6 +621,7 @@ function ImportModal({ products, platforms, onClose, onImport }) {
         price,
         coupon,
         fee: Math.round(fee * 100) / 100,
+        unitCost: product.cost || 0,
         date: date.toISOString()
       });
       stockDelta[product.id] = (stockDelta[product.id] || 0) + qty;
@@ -846,7 +849,132 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
         style: { width: Math.max(margin, 2) + "%" }
       }
     )), /* @__PURE__ */ React.createElement("div", { className: "margin-pct" }, margin.toFixed(1), "%"));
-  }))));
+  }))), /* @__PURE__ */ React.createElement(PlatformFeeReport, { sales, products, platforms }));
+}
+function PlatformFeeReport({ sales, products, platforms }) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const ymd = (d) => { const x = new Date(d); return x.getFullYear() + "-" + pad(x.getMonth() + 1) + "-" + pad(x.getDate()); };
+  const now = /* @__PURE__ */ new Date();
+  const [mode, setMode] = useState("day");
+  const [from, setFrom] = useState(now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-01");
+  const [to, setTo] = useState(ymd(now));
+  const [limit, setLimit] = useState(14);
+  const pct = (f, g) => g > 0 ? Math.round(f / g * 1000) / 10 + "%" : "-";
+  const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
+  const platformMap = Object.fromEntries(platforms.map((p) => [p.id, p]));
+  const groups = useMemo(() => {
+    const map = {};
+    sales.forEach((sl) => {
+      const day = ymd(sl.date);
+      if (mode === "custom" && (day < from || day > to)) return;
+      const key = mode === "day" ? day : mode === "month" ? day.slice(0, 7) : "range";
+      const m = computeSaleMetrics(sl, productMap[sl.productId], platformMap[sl.platformId]);
+      if (!map[key]) map[key] = { key, byPlatform: {}, gross: 0, fee: 0 };
+      const g = map[key];
+      if (!g.byPlatform[sl.platformId]) g.byPlatform[sl.platformId] = { gross: 0, fee: 0, orders: 0 };
+      const b = g.byPlatform[sl.platformId];
+      b.gross += m.gross; b.fee += m.fee; b.orders += 1;
+      g.gross += m.gross; g.fee += m.fee;
+    });
+    return Object.values(map).sort((a, b) => a.key < b.key ? 1 : -1);
+  }, [sales, products, platforms, mode, from, to]);
+  const labelOf = (key) => {
+    if (key === "range") return from + " \u2192 " + to;
+    if (mode === "month") return new Date(key + "-01T00:00:00").toLocaleDateString("th-TH", { month: "long", year: "numeric" });
+    return new Date(key + "T00:00:00").toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short", year: "2-digit" });
+  };
+  const modes = [["day", "\u0E23\u0E32\u0E22\u0E27\u0E31\u0E19"], ["month", "\u0E23\u0E32\u0E22\u0E40\u0E14\u0E37\u0E2D\u0E19"], ["custom", "\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E40\u0E2D\u0E07"]];
+  const shown = mode === "custom" ? groups : groups.slice(0, limit);
+  return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
+    React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 } },
+      React.createElement("div", { className: "section-title" }, "\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21\u0E41\u0E1E\u0E25\u0E15\u0E1F\u0E2D\u0E23\u0E4C\u0E21 (%)"),
+      React.createElement("div", { className: "toggle-group" }, modes.map(([id, label]) =>
+        React.createElement("button", { key: id, className: "toggle" + (mode === id ? " active" : ""), onClick: () => setMode(id) }, label)))),
+    mode === "custom" && React.createElement("div", { className: "field-row", style: { marginBottom: 12 } },
+      React.createElement("label", { className: "field" }, React.createElement("span", null, "\u0E08\u0E32\u0E01\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"),
+        React.createElement("input", { type: "date", value: from, onChange: (e) => setFrom(e.target.value) })),
+      React.createElement("label", { className: "field" }, React.createElement("span", null, "\u0E16\u0E36\u0E07\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"),
+        React.createElement("input", { type: "date", value: to, onChange: (e) => setTo(e.target.value) }))),
+    shown.length === 0 && React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49"),
+    shown.map((g) => React.createElement("div", { key: g.key, style: { padding: "10px 0", borderTop: "1px solid #EEF0ED" } },
+      React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 13.5, marginBottom: 6 } },
+        React.createElement("span", null, labelOf(g.key)),
+        React.createElement("span", null, "\u0E23\u0E27\u0E21 ", pct(g.fee, g.gross), " \u00B7 ", fmtCurrency(g.fee))),
+      Object.entries(g.byPlatform).sort((a, b) => b[1].gross - a[1].gross).map(([pid, b]) => {
+        const pl = platformMap[pid];
+        return React.createElement("div", { key: pid, style: { display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 13 } },
+          React.createElement("span", { style: { width: 9, height: 9, borderRadius: 5, background: pl?.color || "#999", flexShrink: 0 } }),
+          React.createElement("span", { style: { flex: 1, minWidth: 0 } }, pl?.name || "-"),
+          React.createElement("span", { style: { color: "#68706B", fontSize: 12 } }, fmtCurrency(b.fee), " / ", fmtCurrency(b.gross)),
+          React.createElement("span", { style: { fontWeight: 700, width: 54, textAlign: "right" } }, pct(b.fee, b.gross)));
+      }))),
+    mode !== "custom" && groups.length > limit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: () => setLimit(limit + 14) }, "\u0E41\u0E2A\u0E14\u0E07\u0E40\u0E1E\u0E34\u0E48\u0E21"),
+    React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 10 } }, "% = \u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21 \u00F7 \u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22 (\u0E01\u0E48\u0E2D\u0E19\u0E2B\u0E31\u0E01\u0E04\u0E39\u0E1B\u0E2D\u0E07)"));
+}
+function SettingsPanel({ products, sales, platforms, setPlatforms, onRestore }) {
+  const [newName, setNewName] = useState("");
+  const palette = ["#E85D3A", "#1877F2", "#06C755", "#8E44AD", "#16A085", "#D35400"];
+  const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const used = (id) => sales.some((x) => x.platformId === id);
+  const upd = (id, patch) => setPlatforms(platforms.map((p) => p.id === id ? { ...p, ...patch } : p));
+  function add() {
+    const n = newName.trim();
+    if (!n) return;
+    setPlatforms([...platforms, { id: "pf_" + uid(), name: n, color: palette[platforms.length % palette.length], feePercent: 0 }]);
+    setNewName("");
+  }
+  function download(name, text, type) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function exportJson() { download("mies-backup-" + day + ".json", JSON.stringify({ exportedAt: (/* @__PURE__ */ new Date()).toISOString(), products, sales, platforms }), "application/json"); }
+  function exportCsv() {
+    const q = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+    const head = ["วันที่", "แพลตฟอร์ม", "สินค้า", "SKU", "จำนวน", "ราคา/ชิ้น", "ยอดขาย", "คูปอง", "ค่าธรรมเนียม", "รายจ่ายอื่นๆ", "ต้นทุน", "กำไร"];
+    const rows = [...sales].sort((a, b) => new Date(a.date) - new Date(b.date)).map((x) => {
+      const p = products.find((t) => t.id === x.productId), pl = platforms.find((t) => t.id === x.platformId);
+      const m = computeSaleMetrics(x, p, pl);
+      return [new Date(x.date).toISOString().slice(0, 10), pl?.name, p?.name, p?.sku, x.quantity, x.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit];
+    });
+    download("mies-sales-" + day + ".csv", "\ufeff" + [head, ...rows].map((r) => r.map(q).join(",")).join("\r\n"), "text/csv;charset=utf-8");
+  }
+  function restore(e) {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const d = JSON.parse(r.result);
+        if (!Array.isArray(d.products) || !Array.isArray(d.sales)) throw new Error("bad");
+        if (window.confirm("แทนที่ข้อมูลปัจจุบันทั้งหมดด้วยไฟล์สำรองนี้?")) onRestore(d);
+      } catch (err) { alert("ไฟล์สำรองไม่ถูกต้อง"); }
+    };
+    r.readAsText(f);
+  }
+  const inp = { padding: 8, borderRadius: 8, border: "1px solid #E1E5E0", fontSize: 14, minWidth: 0 };
+  return React.createElement("div", { className: "page-inner" },
+    React.createElement("div", { className: "card section-card" },
+      React.createElement("div", { className: "section-title", style: { marginBottom: 10 } }, "แพลตฟอร์ม / ค่าธรรมเนียม (%)"),
+      platforms.map((pl) => React.createElement("div", { key: pl.id, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+        React.createElement("span", { style: { width: 10, height: 10, borderRadius: 5, background: pl.color, flexShrink: 0 } }),
+        React.createElement("input", { style: { ...inp, flex: 1 }, value: pl.name, onChange: (e) => upd(pl.id, { name: e.target.value }) }),
+        React.createElement("input", { style: { ...inp, width: 64 }, type: "number", min: "0", step: "any", inputMode: "decimal", value: pl.feePercent, onChange: (e) => upd(pl.id, { feePercent: e.target.value === "" ? "" : parseFloat(e.target.value) }) }),
+        React.createElement("span", null, "%"),
+        React.createElement("button", { className: "icon-btn-sm", disabled: used(pl.id), title: used(pl.id) ? "มีรายการขายอยู่ ลบไม่ได้" : "ลบ", style: { opacity: used(pl.id) ? 0.3 : 1 }, onClick: () => window.confirm("ลบแพลตฟอร์มนี้?") && setPlatforms(platforms.filter((x) => x.id !== pl.id)) }, React.createElement(Trash2, { size: 14 })))),
+      React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
+        React.createElement("input", { style: { ...inp, flex: 1 }, placeholder: "ชื่อแพลตฟอร์มใหม่", value: newName, onChange: (e) => setNewName(e.target.value) }),
+        React.createElement("button", { className: "btn btn-primary", onClick: add }, "เพิ่ม")),
+      React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "แก้ % มีผลกับรายการขายใหม่เท่านั้น รายการเก่าไม่เปลี่ยน")),
+    React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
+      React.createElement("div", { className: "section-title", style: { marginBottom: 10 } }, "สำรอง / ส่งออกข้อมูล"),
+      React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+        React.createElement("button", { className: "btn btn-outline btn-block", onClick: exportJson }, "ดาวน์โหลดไฟล์สำรอง (.json)"),
+        React.createElement("button", { className: "btn btn-outline btn-block", onClick: exportCsv }, "ส่งออกรายการขาย (.csv เปิดใน Excel)"),
+        React.createElement("label", { className: "btn btn-outline btn-block", style: { cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง (.json)",
+          React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })))));
 }
 function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState("");
@@ -882,7 +1010,7 @@ function loadStoredState() {
 function App() {
   const stored = loadStoredState();
   const [products, setProducts] = useState(stored?.products || []);
-  const [platforms] = useState(DEFAULT_PLATFORMS);
+  const [platforms, setPlatforms] = useState(stored?.platforms || DEFAULT_PLATFORMS);
   const [sales, setSales] = useState(stored?.sales || []);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [dateState, setDateState] = useState({
@@ -903,8 +1031,8 @@ function App() {
     setSyncMsg("\u0E01\u0E33\u0E25\u0E31\u0E07\u0E42\u0E2B\u0E25\u0E14\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u2026");
     loadRemote().then((remote) => {
       if (cancelled) return;
-      if (remote) { setProducts(remote.products || []); setSales(remote.sales || []); }
-      else if (products.length || sales.length) { saveRemote({ products, sales }).catch(() => {}); }
+      if (remote) { setProducts(remote.products || []); setSales(remote.sales || []); if (Array.isArray(remote.platforms) && remote.platforms.length) setPlatforms(remote.platforms); }
+      else if (products.length || sales.length) { saveRemote({ products, sales, platforms }).catch(() => {}); }
       setReady(true); setSyncMsg("");
     }).catch((e) => {
       if (cancelled || handleAuthError(e)) return;
@@ -914,19 +1042,23 @@ function App() {
   }, [session]);
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ products, sales }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ products, sales, platforms }));
     } catch (e) {
       console.warn("Could not save data", e);
     }
     if (!cloudOn || !session || !ready) return;
     const t = setTimeout(() => {
       setSyncMsg("\u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u2026");
-      saveRemote({ products, sales })
+      saveRemote({ products, sales, platforms })
         .then(() => setSyncMsg("\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2D\u0E2D\u0E19\u0E44\u0E25\u0E19\u0E4C\u0E41\u0E25\u0E49\u0E27 \u2713"))
         .catch((e) => { if (!handleAuthError(e)) setSyncMsg("\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2D\u0E2D\u0E19\u0E44\u0E25\u0E19\u0E4C\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08"); });
     }, 800);
     return () => clearTimeout(t);
-  }, [products, sales, session, ready]);
+  }, [products, sales, platforms, session, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    setSales((prev) => prev.some((x) => x.unitCost == null && products.some((p) => p.id === x.productId)) ? prev.map((x) => { const p = products.find((q) => q.id === x.productId); return x.unitCost == null && p ? { ...x, unitCost: p.cost || 0 } : x; }) : prev);
+  }, [ready]);
   const lowStockCount = products.filter((p) => getStockStatus(p) !== "\u0E1B\u0E01\u0E15\u0E34").length;
   function handleAddSale(sale) {
     setSales((prev) => [...prev, sale]);
@@ -939,6 +1071,10 @@ function App() {
     if (!sale) return;
     setSales((prev) => prev.filter((x) => x.id !== id));
     setProducts((prev) => prev.map((p) => p.id === sale.productId ? { ...p, stock: p.stock + sale.quantity } : p));
+  }
+  function handleRestore(d) {
+    setProducts(d.products); setSales(d.sales);
+    if (Array.isArray(d.platforms) && d.platforms.length) setPlatforms(d.platforms);
   }
   function handleImport(newSales, stockDelta) {
     setSales((prev) => [...prev, ...newSales]);
@@ -976,7 +1112,7 @@ function App() {
       onImport: handleImport,
       onDeleteSale: handleDeleteSale
     }
-  ), activeTab === "products" && /* @__PURE__ */ React.createElement(ProductsPage, { products, onSave: handleSaveProduct, onDelete: handleDeleteProduct }), activeTab === "analytics" && /* @__PURE__ */ React.createElement(
+  ), activeTab === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ProductsPage, { products, onSave: handleSaveProduct, onDelete: handleDeleteProduct }), /* @__PURE__ */ React.createElement(SettingsPanel, { products, sales, platforms, setPlatforms, onRestore: handleRestore })), activeTab === "analytics" && /* @__PURE__ */ React.createElement(
     AnalyticsPage,
     {
       sales,
