@@ -1,10 +1,11 @@
-const CACHE_NAME = "mies-dashboard-v15";
+const CACHE_NAME = "mies-dashboard-v17";
 
 const APP_SHELL = [
   "./",
   "./index.html",
   "./app.js",
   "./cloud.js",
+  "./config.js",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
