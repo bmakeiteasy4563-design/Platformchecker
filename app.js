@@ -521,7 +521,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel }) {
       coupon: couponNum,
       fee: r2(fee.baht),
       otherExpense: r2(other.baht),
-      unitCost: initial?.unitCost ?? (product?.cost || 0),
+      unitCost: initial && initial.productId === productId ? initial.unitCost ?? (product?.cost || 0) : product?.cost || 0,
       date: new Date(date).toISOString()
     });
     setProductId(""); setQuantity(1); setPrice(""); setPlatformId(""); setCoupon(0);
@@ -650,6 +650,7 @@ function ExpenseManager({ expenses, onChange }) {
   const todayY = () => { const d = /* @__PURE__ */ new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
   const [editing, setEditing] = useState(null);
   const [viewSlip, setViewSlip] = useState(null);
+  const [sumMonth, setSumMonth] = useState("all");
   const [busy, setBusy] = useState(false);
   const when = (e) => e.bill ? new Date(e.date + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "2-digit" }) : (e.recurring ? "ทุกเดือน ตั้งแต่ " : "รายเดือน ") + new Date(e.month + "-01T00:00:00").toLocaleDateString("th-TH", { month: "short", year: "2-digit" });
   const openNew = (bill) => setEditing({ id: "e" + Date.now().toString(36), isNew: true, bill, name: "", amount: "", date: todayY(), month: todayY().slice(0, 7), recurring: false, slip: false, slipData: null, slipRemoved: false });
@@ -681,12 +682,33 @@ function ExpenseManager({ expenses, onChange }) {
   }
   const rows = [...expenses].sort((a, b) => (a.date || a.month + "-01") < (b.date || b.month + "-01") ? 1 : -1);
   const inp = (label, props) => React.createElement("label", { className: "field" }, React.createElement("span", null, label), React.createElement("input", props));
+  const bills = expenses.filter((e) => e.bill);
+  const billMonths = [...new Set(bills.map((e) => e.month))].sort().reverse();
+  const nameList = [...new Set(bills.map((e) => e.name.trim()))];
+  const scope = sumMonth === "all" ? bills : bills.filter((e) => e.month === sumMonth);
+  const grp = {};
+  scope.forEach((e) => { const k = e.name.trim().toLowerCase(); if (!grp[k]) grp[k] = { name: e.name.trim(), count: 0, total: 0 }; grp[k].count += 1; grp[k].total += e.amount; });
+  const sumRows = Object.values(grp).sort((a, b) => b.total - a.total);
+  const grand = sumRows.reduce((a, g) => a + g.total, 0);
+  const monthTxt = (m) => new Date(m + "-01T00:00:00").toLocaleDateString("th-TH", { month: "long", year: "numeric" });
   return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
     React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" } },
       React.createElement("div", { className: "section-title" }, "รายจ่าย / บิล"),
       React.createElement("div", { style: { display: "flex", gap: 6 } },
         React.createElement("button", { className: "btn btn-primary", onClick: () => openNew(true) }, React.createElement(Plus, { size: 16 }), " บิล"),
         React.createElement("button", { className: "btn btn-outline", onClick: () => openNew(false) }, React.createElement(Plus, { size: 16 }), " รายเดือน"))),
+    bills.length > 0 && React.createElement("div", { style: { background: "#F6F7F5", borderRadius: 12, padding: 12, marginBottom: 12 } },
+      React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 } },
+        React.createElement("div", { style: { fontWeight: 700, fontSize: 13.5 } }, "สรุปบิลตามรายการ"),
+        React.createElement("select", { value: sumMonth, onChange: (ev) => setSumMonth(ev.target.value), style: { fontSize: 13, padding: "4px 8px", borderRadius: 8 } },
+          React.createElement("option", { value: "all" }, "ทุกเดือน"),
+          billMonths.map((m) => React.createElement("option", { key: m, value: m }, monthTxt(m))))),
+      sumRows.map((g) => React.createElement("div", { key: g.name, style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 13.5 } },
+        React.createElement("span", { style: { flex: 1, minWidth: 0 } }, g.name),
+        React.createElement("span", { style: { color: "#68706B", fontSize: 12 } }, g.count + " บิล · " + (grand > 0 ? Math.round(g.total / grand * 1000) / 10 : 0) + "%"),
+        React.createElement("span", { style: { fontWeight: 700, minWidth: 70, textAlign: "right" } }, fmtCurrency(g.total)))),
+      React.createElement("div", { style: { display: "flex", justifyContent: "space-between", borderTop: "1px solid #E1E5E0", marginTop: 6, paddingTop: 8, fontWeight: 800 } }, React.createElement("span", null, "รวมทั้งหมด (" + scope.length + " บิล)"), React.createElement("span", null, fmtCurrency(grand)))),
+    React.createElement("datalist", { id: "bill-names" }, nameList.map((n) => React.createElement("option", { key: n, value: n }))),
     rows.length === 0 && React.createElement("div", { className: "mini-empty" }, "ยังไม่มีรายจ่าย กด \"บิล\" เพื่อลงตามวันที่จ่ายพร้อมแนบสลิป"),
     rows.map((e) => React.createElement("div", { key: e.id, style: { display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: "1px solid #EEF0ED" } },
       e.slip ? React.createElement("button", { type: "button", onClick: () => setViewSlip(e), style: { padding: 0, border: "none", background: "none", cursor: "pointer", flexShrink: 0 } }, React.createElement(SlipImg, { id: e.id, style: { width: 40, height: 40, objectFit: "cover", borderRadius: 8 } })) : null,
@@ -701,7 +723,7 @@ function ExpenseManager({ expenses, onChange }) {
     editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (ev) => ev.stopPropagation() }, React.createElement("div", { className: "modal-body" },
       React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, (editing.isNew ? "เพิ่ม" : "แก้ไข") + (editing.bill ? "บิล" : "รายจ่ายรายเดือน")),
       React.createElement("div", { className: "form-grid" },
-        inp("รายการ", { value: editing.name, placeholder: "เช่น ค่าสินค้าล็อตใหม่", onChange: (ev) => setEditing({ ...editing, name: ev.target.value }) }),
+        inp("รายการ", { list: "bill-names", value: editing.name, placeholder: "เช่น ค่าสินค้าล็อตใหม่", onChange: (ev) => setEditing({ ...editing, name: ev.target.value }) }),
         inp(editing.bill ? "จำนวนเงิน (บาท)" : "จำนวนเงิน (บาท/เดือน)", { type: "number", min: "0", step: "any", inputMode: "decimal", value: editing.amount, onChange: (ev) => setEditing({ ...editing, amount: ev.target.value }) }),
         editing.bill ? inp("วันที่จ่าย", { type: "date", value: editing.date, onChange: (ev) => setEditing({ ...editing, date: ev.target.value }) }) : inp("เดือน", { type: "month", value: editing.month, onChange: (ev) => setEditing({ ...editing, month: ev.target.value }) }),
         !editing.bill && React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 14 } }, React.createElement("input", { type: "checkbox", checked: !!editing.recurring, onChange: (ev) => setEditing({ ...editing, recurring: ev.target.checked }) }), "เกิดซ้ำทุกเดือน (ตั้งแต่เดือนนี้เป็นต้นไป)"),
@@ -772,7 +794,8 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: exportJson }, "ไฟล์สำรองทั้งหมด (JSON รวมสลิป)"),
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
-      React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })));
+      React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 20"));
 }
 function ImportModal({ products, platforms, onClose, onImport }) {
   const [step, setStep] = useState(1);
@@ -1372,6 +1395,12 @@ function App() {
     );
   }
   function handleSaveProduct(product) {
+    const old = products.find((p) => p.id === product.id);
+    if (old && (old.cost || 0) !== (product.cost || 0) && sales.some((x) => x.productId === product.id)) {
+      if (window.confirm("ต้นทุนเปลี่ยนจาก " + (old.cost || 0) + " เป็น " + (product.cost || 0) + " บาท\nปรับรายการขายเก่าของสินค้านี้ให้ใช้ต้นทุนใหม่ด้วยไหม?\n(ตกลง = ปรับทั้งหมด / ยกเลิก = ใช้กับรายการใหม่เท่านั้น)")) {
+        setSales((prev) => prev.map((x) => x.productId === product.id ? { ...x, unitCost: product.cost || 0 } : x));
+      }
+    }
     setProducts((prev) => {
       const exists = prev.some((p) => p.id === product.id);
       return exists ? prev.map((p) => p.id === product.id ? product : p) : [...prev, product];
