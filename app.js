@@ -151,7 +151,7 @@ function expenseForRange(expenses, start, end) {
     cur.setMonth(cur.getMonth() + 1);
   }
   const sd = dayOf(start), ed = dayOf(end);
-  for (const e of expenses) if (e.bill) { const d = /* @__PURE__ */ new Date(e.date + "T00:00:00"); if (d >= sd && d <= ed) total += e.amount; }
+  for (const e of expenses) if (e.bill) { const [y, m] = e.month.split("-").map(Number); const monthEnd = new Date(y, m, 0); if (monthEnd >= sd && monthEnd <= ed) total += e.amount; }
   return total;
 }
 function downloadFile(name, text, type) {
@@ -270,8 +270,8 @@ function DateFilter({ preset, setPreset, customRange, setCustomRange }) {
     }
   ), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => setOpen(false) }, "\u0E15\u0E01\u0E25\u0E07"))));
 }
-function ProfitHero({ profit, trend, hasBaseline, expense }) {
-  return /* @__PURE__ */ React.createElement("div", { className: "hero-card" }, /* @__PURE__ */ React.createElement("div", { className: "hero-label" }, "NET PROFIT"), /* @__PURE__ */ React.createElement("div", { className: "hero-value" }, fmtCurrency(profit)), expense > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "หักรายจ่ายรายเดือนแล้ว " + fmtCurrency(expense)), /* @__PURE__ */ React.createElement("div", { className: "hero-trend-row" }, /* @__PURE__ */ React.createElement(Trend, { value: trend, hasBaseline }), hasBaseline && /* @__PURE__ */ React.createElement("span", { className: "hero-trend-caption" }, "\u0E40\u0E17\u0E35\u0E22\u0E1A\u0E0A\u0E48\u0E27\u0E07\u0E01\u0E48\u0E2D\u0E19\u0E2B\u0E19\u0E49\u0E32")), /* @__PURE__ */ React.createElement("svg", { className: "hero-deco", viewBox: "0 0 300 90", preserveAspectRatio: "none" }, /* @__PURE__ */ React.createElement(
+function ProfitHero({ profit, trend, hasBaseline, expense, pending }) {
+  return /* @__PURE__ */ React.createElement("div", { className: "hero-card" }, /* @__PURE__ */ React.createElement("div", { className: "hero-label" }, "NET PROFIT"), /* @__PURE__ */ React.createElement("div", { className: "hero-value" }, fmtCurrency(profit)), expense > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "หักรายจ่าย/บิลแล้ว " + fmtCurrency(expense)), pending > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "บิลเดือนนี้สะสม " + fmtCurrency(pending) + " (หักตอนสิ้นเดือน)"), /* @__PURE__ */ React.createElement("div", { className: "hero-trend-row" }, /* @__PURE__ */ React.createElement(Trend, { value: trend, hasBaseline }), hasBaseline && /* @__PURE__ */ React.createElement("span", { className: "hero-trend-caption" }, "\u0E40\u0E17\u0E35\u0E22\u0E1A\u0E0A\u0E48\u0E27\u0E07\u0E01\u0E48\u0E2D\u0E19\u0E2B\u0E19\u0E49\u0E32")), /* @__PURE__ */ React.createElement("svg", { className: "hero-deco", viewBox: "0 0 300 90", preserveAspectRatio: "none" }, /* @__PURE__ */ React.createElement(
     "path",
     {
       d: "M0,70 C40,50 60,80 100,55 C140,30 160,60 200,35 C240,10 260,45 300,20",
@@ -441,6 +441,8 @@ function Dashboard({ sales, products, platforms, expenses, dateState, setDateSta
   const withExp = (a, st, en) => { const e = expenseForRange(expenses || [], st, en); const profit = a.profit - e; return { ...a, profit, expense: e, margin: a.gross > 0 ? profit / a.gross * 100 : 0 }; };
   const current = withExp(aggregate(filteredSales, products, platforms), start, end);
   const previous = withExp(aggregate(prevSales, products, platforms), pStart, pEnd);
+  const endKey = end.getFullYear() + "-" + String(end.getMonth() + 1).padStart(2, "0");
+  const pendingBills = new Date(end.getFullYear(), end.getMonth() + 1, 0) > new Date(end.getFullYear(), end.getMonth(), end.getDate()) ? (expenses || []).filter((e) => e.bill && e.month === endKey).reduce((a, e) => a + e.amount, 0) : 0;
   const hasBaseline = prevSales.length > 0;
   if (sales.length === 0) {
     return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(Header, { title: "MIES TRADING", subtitle: "Sales Overview", lowStockCount: 0 }), /* @__PURE__ */ React.createElement(
@@ -475,7 +477,8 @@ function Dashboard({ sales, products, platforms, expenses, dateState, setDateSta
       profit: current.profit,
       trend: pctChange(current.profit, previous.profit),
       hasBaseline,
-      expense: current.expense
+      expense: current.expense,
+      pending: pendingBills
     }
   ), /* @__PURE__ */ React.createElement(KPIGrid, { current, previous, hasBaseline }), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement(LowStockAlert, { products, onNavigate: () => onGoto("products") }), /* @__PURE__ */ React.createElement(PlatformPerformance, { sales: filteredSales, products, platforms }), /* @__PURE__ */ React.createElement(TopProducts, { sales: filteredSales, products }), /* @__PURE__ */ React.createElement(RecentSales, { sales, products, platforms }));
 }
@@ -718,7 +721,7 @@ function ExpenseManager({ expenses, onChange }) {
       React.createElement("span", { style: { fontWeight: 700, fontSize: 14, marginRight: 4 } }, fmtCurrency(e.amount)),
       React.createElement("button", { className: "icon-btn-sm", "aria-label": "แก้ไข", onClick: () => setEditing({ ...e, amount: String(e.amount), slipData: null, slipRemoved: false }) }, React.createElement(Edit2, { size: 14 })),
       React.createElement("button", { className: "icon-btn-sm", "aria-label": "ลบ", onClick: () => remove(e) }, React.createElement(Trash2, { size: 14 })))),
-    React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "บิลหักจากกำไรในวันที่จ่าย / รายเดือนหักเฉลี่ยตามจำนวนวัน / สลิปเก็บในเครื่องนี้ (ไม่ขึ้นออนไลน์)"),
+    React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "บิลสะสมไว้ แล้วหักรวมทีเดียวตอนสิ้นเดือน / รายเดือนหักเฉลี่ยตามจำนวนวัน / สลิปเก็บในเครื่องนี้ (ไม่ขึ้นออนไลน์)"),
     viewSlip && React.createElement(SlipViewer, { id: viewSlip.id, name: viewSlip.name, onClose: () => setViewSlip(null) }),
     editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (ev) => ev.stopPropagation() }, React.createElement("div", { className: "modal-body" },
       React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, (editing.isNew ? "เพิ่ม" : "แก้ไข") + (editing.bill ? "บิล" : "รายจ่ายรายเดือน")),
@@ -795,7 +798,7 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
-    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 20"));
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 21"));
 }
 function ImportModal({ products, platforms, onClose, onImport }) {
   const [step, setStep] = useState(1);
