@@ -146,10 +146,12 @@ function expenseForRange(expenses, start, end) {
     const ms = new Date(y, mo, 1), me = new Date(y, mo, dim, 23, 59, 59, 999);
     const os = start > ms ? start : ms, oe = end < me ? end : me;
     const days = Math.max(0, Math.round((dayOf(oe) - dayOf(os)) / 864e5) + 1);
-    const monthSum = expenses.reduce((a, e) => a + ((e.recurring ? e.month <= key : e.month === key) ? e.amount : 0), 0);
+    const monthSum = expenses.reduce((a, e) => a + (e.bill ? 0 : (e.recurring ? e.month <= key : e.month === key) ? e.amount : 0), 0);
     total += monthSum * days / dim;
     cur.setMonth(cur.getMonth() + 1);
   }
+  const sd = dayOf(start), ed = dayOf(end);
+  for (const e of expenses) if (e.bill) { const d = /* @__PURE__ */ new Date(e.date + "T00:00:00"); if (d >= sd && d <= ed) total += e.amount; }
   return total;
 }
 function downloadFile(name, text, type) {
@@ -158,6 +160,15 @@ function downloadFile(name, text, type) {
   a.href = url; a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+const slipDb = () => new Promise((res, rej) => { const r = indexedDB.open("mies-slips", 1); r.onupgradeneeded = () => r.result.createObjectStore("slips"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+const slipTx = async (mode, fn) => { const db = await slipDb(); return new Promise((res, rej) => { const t = db.transaction("slips", mode); const q = fn(t.objectStore("slips")); t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); }); };
+const slipPut = (id, data) => slipTx("readwrite", (st) => st.put(data, id));
+const slipGet = (id) => slipTx("readonly", (st) => st.get(id));
+const slipDel = (id) => slipTx("readwrite", (st) => st.delete(id));
+async function slipAll() {
+  const db = await slipDb();
+  return new Promise((res, rej) => { const out = {}; const q = db.transaction("slips").objectStore("slips").openCursor(); q.onsuccess = () => { const c = q.result; if (c) { out[c.key] = c.value; c.continue(); } else res(out); }; q.onerror = () => rej(q.error); });
 }
 function stableStr(v) {
   return JSON.stringify(v, (k, x) => x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((kk) => [kk, x[kk]])) : x);
@@ -620,78 +631,146 @@ function PlatformManager({ platforms, sales, onChange }) {
       React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 14 }, disabled: !editing.name.trim(), onClick: save }, "บันทึก"),
       React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: () => setEditing(null) }, "ยกเลิก")))));
 }
+function SlipImg({ id, style }) {
+  const [src, setSrc] = useState(null);
+  useEffect(() => { let on = true; slipGet(id).then((d) => on && setSrc(d || "")).catch(() => on && setSrc("")); return () => { on = false; }; }, [id]);
+  return src ? React.createElement("img", { src, alt: "slip", style }) : React.createElement("div", { style: { ...style, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#99A09B", background: "#F1F3F0" } }, src === null ? "..." : "ไม่พบสลิป");
+}
+function SlipViewer({ id, name, onClose }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => { slipGet(id).then((d) => setSrc(d || "")).catch(() => {}); }, [id]);
+  return React.createElement("div", { className: "modal-overlay", onClick: onClose }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body" },
+    React.createElement("div", { className: "section-title", style: { marginBottom: 10 } }, "สลิป: " + name),
+    src ? React.createElement("img", { src, alt: "slip", style: { width: "100%", borderRadius: 10 } }) : "...",
+    src && React.createElement("a", { className: "btn btn-outline btn-block", style: { marginTop: 10, textAlign: "center", textDecoration: "none" }, href: src, download: "slip-" + name + ".jpg" }, "ดาวน์โหลดสลิป"),
+    React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: onClose }, "ปิด"))));
+}
 function ExpenseManager({ expenses, onChange }) {
-  const nowM = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); })();
+  const pad = (n) => String(n).padStart(2, "0");
+  const todayY = () => { const d = /* @__PURE__ */ new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
   const [editing, setEditing] = useState(null);
-  const monthTxt = (m) => new Date(m + "-01T00:00:00").toLocaleDateString("th-TH", { month: "short", year: "2-digit" });
-  function save() {
+  const [viewSlip, setViewSlip] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const when = (e) => e.bill ? new Date(e.date + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "2-digit" }) : (e.recurring ? "ทุกเดือน ตั้งแต่ " : "รายเดือน ") + new Date(e.month + "-01T00:00:00").toLocaleDateString("th-TH", { month: "short", year: "2-digit" });
+  const openNew = (bill) => setEditing({ id: "e" + Date.now().toString(36), isNew: true, bill, name: "", amount: "", date: todayY(), month: todayY().slice(0, 7), recurring: false, slip: false, slipData: null, slipRemoved: false });
+  async function pickSlip(ev) {
+    const f = ev.target.files && ev.target.files[0];
+    ev.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    try { const d = await compressImage(f, 1000, 0.65); setEditing((x) => ({ ...x, slipData: d, slipRemoved: false })); } catch (err) { alert("เปิดรูปไม่ได้"); }
+    setBusy(false);
+  }
+  async function save() {
     const name = (editing.name || "").trim();
     const amount = parseFloat(editing.amount) || 0;
-    if (!name || amount <= 0 || !editing.month) return;
-    const item = { id: editing.id || "e" + Date.now().toString(36), name, amount, month: editing.month, recurring: !!editing.recurring };
-    onChange(editing.id ? expenses.map((x) => x.id === item.id ? item : x) : [...expenses, item]);
+    if (!name || amount <= 0 || (editing.bill ? !editing.date : !editing.month)) return;
+    const hasSlip = editing.slipData ? true : editing.slipRemoved ? false : editing.slip;
+    try {
+      if (editing.slipData) await slipPut(editing.id, editing.slipData);
+      else if (editing.slipRemoved) await slipDel(editing.id);
+    } catch (err) { alert("บันทึกสลิปไม่สำเร็จ"); return; }
+    const item = { id: editing.id, name, amount, bill: !!editing.bill, slip: hasSlip, ...editing.bill ? { date: editing.date, month: editing.date.slice(0, 7) } : { month: editing.month, recurring: !!editing.recurring } };
+    onChange(editing.isNew ? [...expenses, item] : expenses.map((x) => x.id === item.id ? item : x));
     setEditing(null);
   }
-  const rows = [...expenses].sort((a, b) => a.month < b.month ? 1 : -1);
+  function remove(e) {
+    if (!window.confirm("ลบ " + e.name + "?" + (e.slip ? " (สลิปจะถูกลบด้วย)" : ""))) return;
+    if (e.slip) slipDel(e.id).catch(() => {});
+    onChange(expenses.filter((x) => x.id !== e.id));
+  }
+  const rows = [...expenses].sort((a, b) => (a.date || a.month + "-01") < (b.date || b.month + "-01") ? 1 : -1);
+  const inp = (label, props) => React.createElement("label", { className: "field" }, React.createElement("span", null, label), React.createElement("input", props));
   return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
-    React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } },
-      React.createElement("div", { className: "section-title" }, "รายจ่ายรายเดือน"),
-      React.createElement("button", { className: "btn btn-primary", onClick: () => setEditing({ name: "", amount: "", month: nowM, recurring: false }) }, React.createElement(Plus, { size: 16 }), " เพิ่ม")),
-    rows.length === 0 && React.createElement("div", { className: "mini-empty" }, "ยังไม่มีรายจ่าย เช่น ค่าโฆษณา ค่าแพ็ก ค่าเช่า"),
+    React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" } },
+      React.createElement("div", { className: "section-title" }, "รายจ่าย / บิล"),
+      React.createElement("div", { style: { display: "flex", gap: 6 } },
+        React.createElement("button", { className: "btn btn-primary", onClick: () => openNew(true) }, React.createElement(Plus, { size: 16 }), " บิล"),
+        React.createElement("button", { className: "btn btn-outline", onClick: () => openNew(false) }, React.createElement(Plus, { size: 16 }), " รายเดือน"))),
+    rows.length === 0 && React.createElement("div", { className: "mini-empty" }, "ยังไม่มีรายจ่าย กด \"บิล\" เพื่อลงตามวันที่จ่ายพร้อมแนบสลิป"),
     rows.map((e) => React.createElement("div", { key: e.id, style: { display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: "1px solid #EEF0ED" } },
+      e.slip ? React.createElement("button", { type: "button", onClick: () => setViewSlip(e), style: { padding: 0, border: "none", background: "none", cursor: "pointer", flexShrink: 0 } }, React.createElement(SlipImg, { id: e.id, style: { width: 40, height: 40, objectFit: "cover", borderRadius: 8 } })) : null,
       React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         React.createElement("div", { style: { fontSize: 14, fontWeight: 600 } }, e.name),
-        React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, e.recurring ? "ทุกเดือน ตั้งแต่ " + monthTxt(e.month) : monthTxt(e.month))),
+        React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, when(e))),
       React.createElement("span", { style: { fontWeight: 700, fontSize: 14, marginRight: 4 } }, fmtCurrency(e.amount)),
-      React.createElement("button", { className: "icon-btn-sm", "aria-label": "แก้ไข", onClick: () => setEditing({ ...e, amount: String(e.amount) }) }, React.createElement(Edit2, { size: 14 })),
-      React.createElement("button", { className: "icon-btn-sm", "aria-label": "ลบ", onClick: () => { if (window.confirm("ลบ " + e.name + "?")) onChange(expenses.filter((x) => x.id !== e.id)); } }, React.createElement(Trash2, { size: 14 })))),
-    React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "หักจากกำไรสุทธิในหน้าภาพรวม โดยเฉลี่ยตามจำนวนวันของช่วงที่เลือก"),
+      React.createElement("button", { className: "icon-btn-sm", "aria-label": "แก้ไข", onClick: () => setEditing({ ...e, amount: String(e.amount), slipData: null, slipRemoved: false }) }, React.createElement(Edit2, { size: 14 })),
+      React.createElement("button", { className: "icon-btn-sm", "aria-label": "ลบ", onClick: () => remove(e) }, React.createElement(Trash2, { size: 14 })))),
+    React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "บิลหักจากกำไรในวันที่จ่าย / รายเดือนหักเฉลี่ยตามจำนวนวัน / สลิปเก็บในเครื่องนี้ (ไม่ขึ้นออนไลน์)"),
+    viewSlip && React.createElement(SlipViewer, { id: viewSlip.id, name: viewSlip.name, onClose: () => setViewSlip(null) }),
     editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (ev) => ev.stopPropagation() }, React.createElement("div", { className: "modal-body" },
-      React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, editing.id ? "แก้ไขรายจ่าย" : "เพิ่มรายจ่าย"),
+      React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, (editing.isNew ? "เพิ่ม" : "แก้ไข") + (editing.bill ? "บิล" : "รายจ่ายรายเดือน")),
       React.createElement("div", { className: "form-grid" },
-        React.createElement("label", { className: "field" }, React.createElement("span", null, "รายการ"), React.createElement("input", { value: editing.name, placeholder: "เช่น ค่าโฆษณา", onChange: (ev) => setEditing({ ...editing, name: ev.target.value }) })),
-        React.createElement("label", { className: "field" }, React.createElement("span", null, "จำนวนเงิน (บาท/เดือน)"), React.createElement("input", { type: "number", min: "0", step: "any", inputMode: "decimal", value: editing.amount, onChange: (ev) => setEditing({ ...editing, amount: ev.target.value }) })),
-        React.createElement("label", { className: "field" }, React.createElement("span", null, "เดือน"), React.createElement("input", { type: "month", value: editing.month, onChange: (ev) => setEditing({ ...editing, month: ev.target.value }) })),
-        React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 14 } }, React.createElement("input", { type: "checkbox", checked: !!editing.recurring, onChange: (ev) => setEditing({ ...editing, recurring: ev.target.checked }) }), "เกิดซ้ำทุกเดือน (ตั้งแต่เดือนนี้เป็นต้นไป)")),
+        inp("รายการ", { value: editing.name, placeholder: "เช่น ค่าสินค้าล็อตใหม่", onChange: (ev) => setEditing({ ...editing, name: ev.target.value }) }),
+        inp(editing.bill ? "จำนวนเงิน (บาท)" : "จำนวนเงิน (บาท/เดือน)", { type: "number", min: "0", step: "any", inputMode: "decimal", value: editing.amount, onChange: (ev) => setEditing({ ...editing, amount: ev.target.value }) }),
+        editing.bill ? inp("วันที่จ่าย", { type: "date", value: editing.date, onChange: (ev) => setEditing({ ...editing, date: ev.target.value }) }) : inp("เดือน", { type: "month", value: editing.month, onChange: (ev) => setEditing({ ...editing, month: ev.target.value }) }),
+        !editing.bill && React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 14 } }, React.createElement("input", { type: "checkbox", checked: !!editing.recurring, onChange: (ev) => setEditing({ ...editing, recurring: ev.target.checked }) }), "เกิดซ้ำทุกเดือน (ตั้งแต่เดือนนี้เป็นต้นไป)"),
+        React.createElement("div", { className: "field" }, React.createElement("span", null, "สลิปการจ่ายเงิน"),
+          React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12 } },
+            editing.slipData ? React.createElement("img", { src: editing.slipData, alt: "", style: { width: 64, height: 64, objectFit: "cover", borderRadius: 10 } }) : editing.slip && !editing.slipRemoved ? React.createElement(SlipImg, { id: editing.id, style: { width: 64, height: 64, objectFit: "cover", borderRadius: 10 } }) : React.createElement("div", { style: { width: 64, height: 64, borderRadius: 10, background: "#F1F3F0", fontSize: 11, color: "#99A09B", display: "flex", alignItems: "center", justifyContent: "center" } }, "ไม่มี"),
+            React.createElement("label", { className: "btn btn-ghost", style: { cursor: "pointer" } }, busy ? "..." : editing.slipData || (editing.slip && !editing.slipRemoved) ? "เปลี่ยนสลิป" : "แนบสลิป", React.createElement("input", { type: "file", accept: "image/*", onChange: pickSlip, style: { display: "none" } })),
+            (editing.slipData || (editing.slip && !editing.slipRemoved)) && React.createElement("button", { type: "button", className: "btn btn-ghost", onClick: () => setEditing({ ...editing, slipData: null, slipRemoved: true }) }, "ลบ")))),
       React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 14 }, onClick: save }, "บันทึก"),
       React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: () => setEditing(null) }, "ยกเลิก")))));
 }
 function DataBackup({ products, sales, platforms, expenses, onRestore }) {
-  const stamp = () => { const d = new Date(); return d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0"); };
-  function exportJson() {
-    downloadFile("mies-backup-" + stamp() + ".json", JSON.stringify({ app: "mies", version: 1, exportedAt: new Date().toISOString(), products, sales, platforms, expenses }, null, 1), "application/json");
-  }
-  function exportCsv() {
+  const pad = (n) => String(n).padStart(2, "0");
+  const stamp = () => { const d = /* @__PURE__ */ new Date(); return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()); };
+  const ymd = (v) => { const d = new Date(v); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
+  const salesTable = () => {
     const pm = Object.fromEntries(products.map((p) => [p.id, p]));
     const plm = Object.fromEntries(platforms.map((p) => [p.id, p]));
-    const q = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
     const head = ["วันที่", "สินค้า", "SKU", "แพลตฟอร์ม", "จำนวน", "ราคา/ชิ้น", "ยอดขาย", "คูปอง", "ค่าธรรมเนียม", "รายจ่ายอื่นๆ", "ต้นทุน", "กำไร"];
-    const lines = [...sales].sort((a, b) => new Date(a.date) - new Date(b.date)).map((s) => {
+    const rows = [...sales].sort((a, b) => new Date(a.date) - new Date(b.date)).map((s) => {
       const m = computeSaleMetrics(s, pm[s.productId], plm[s.platformId]);
-      const d = new Date(s.date);
-      const ds = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-      return [ds, pm[s.productId]?.name, pm[s.productId]?.sku, plm[s.platformId]?.name, s.quantity, s.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit].map(q).join(",");
+      return [ymd(s.date), pm[s.productId]?.name || "", pm[s.productId]?.sku || "", plm[s.platformId]?.name || "", s.quantity, s.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit];
     });
-    downloadFile("mies-sales-" + stamp() + ".csv", "\ufeff" + [head.map(q).join(","), ...lines].join("\r\n"), "text/csv;charset=utf-8");
+    return [head, ...rows];
+  };
+  async function exportJson() {
+    let slips = {};
+    try { slips = await slipAll(); } catch (e) {}
+    downloadFile("mies-backup-" + stamp() + ".json", JSON.stringify({ app: "mies", version: 2, exportedAt: (/* @__PURE__ */ new Date()).toISOString(), products, sales, platforms, expenses, slips }), "application/json");
+  }
+  function exportCsv() {
+    const q = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+    downloadFile("mies-sales-" + stamp() + ".csv", "\ufeff" + salesTable().map((r) => r.map(q).join(",")).join("\r\n"), "text/csv;charset=utf-8");
+  }
+  async function exportXlsx() {
+    try {
+      const mod = await import("https://esm.sh/xlsx@0.18.5");
+      const X = mod.utils ? mod : mod.default;
+      const wb = X.utils.book_new();
+      const bills = [...expenses].filter((e) => e.bill).sort((a, b) => a.date < b.date ? -1 : 1).map((e) => [e.date, e.name, e.amount, e.slip ? "มี" : "-"]);
+      const monthly = expenses.filter((e) => !e.bill).map((e) => [e.name, e.amount, e.month, e.recurring ? "ทุกเดือน" : "เดือนเดียว"]);
+      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(salesTable()), "รายการขาย");
+      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["วันที่จ่าย", "รายการ", "จำนวนเงิน", "สลิป"], ...bills]), "บิลรายจ่าย");
+      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["รายการ", "จำนวนเงิน/เดือน", "เดือน", "ประเภท"], ...monthly]), "รายจ่ายรายเดือน");
+      downloadFile("mies-report-" + stamp() + ".xlsx", X.write(wb, { bookType: "xlsx", type: "array" }), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    } catch (err) { alert("สร้างไฟล์ Excel ไม่ได้ (ต้องต่ออินเทอร์เน็ตในครั้งแรก) ลองใช้ CSV แทน"); }
   }
   function restore(e) {
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!f) return;
     const r = new FileReader();
-    r.onload = () => {
+    r.onload = async () => {
       try {
         const d = JSON.parse(r.result);
         if (!Array.isArray(d.products) || !Array.isArray(d.sales)) throw new Error("bad");
-        if (window.confirm("กู้คืนข้อมูลจากไฟล์นี้? ข้อมูลปัจจุบันในแอปทั้งหมดจะถูกแทนที่ (สินค้า " + d.products.length + " รายการ, รายการขาย " + d.sales.length + " รายการ)")) onRestore(d);
+        if (window.confirm("กู้คืนข้อมูลจากไฟล์นี้? ข้อมูลปัจจุบันในแอปทั้งหมดจะถูกแทนที่ (สินค้า " + d.products.length + " รายการ, รายการขาย " + d.sales.length + " รายการ)")) {
+          for (const [k, v] of Object.entries(d.slips || {})) await slipPut(k, v);
+          onRestore(d);
+        }
       } catch (err) { alert("ไฟล์สำรองไม่ถูกต้อง"); }
     };
     r.readAsText(f);
   }
   return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
-    React.createElement("div", { className: "section-title", style: { marginBottom: 10 } }, "สำรองข้อมูล"),
-    React.createElement("button", { className: "btn btn-primary btn-block", onClick: exportJson }, "ดาวน์โหลดไฟล์สำรอง (JSON)"),
-    React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV เปิดใน Excel)"),
+    React.createElement("div", { className: "section-title", style: { marginBottom: 10 } }, "ไฟล์ในเครื่อง / สำรองข้อมูล"),
+    React.createElement("button", { className: "btn btn-primary btn-block", onClick: exportXlsx }, "ส่งออก Excel (.xlsx): ขาย + บิล + รายเดือน"),
+    React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: exportJson }, "ไฟล์สำรองทั้งหมด (JSON รวมสลิป)"),
+    React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })));
 }
