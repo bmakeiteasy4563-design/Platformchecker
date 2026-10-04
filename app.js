@@ -492,7 +492,11 @@ function Dashboard({ sales, products, platforms, expenses, dateState, setDateSta
     }
   ), /* @__PURE__ */ React.createElement(KPIGrid, { current, previous, hasBaseline }), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement(LowStockAlert, { products, onNavigate: () => onGoto("products") }), /* @__PURE__ */ React.createElement(PlatformPerformance, { sales: filteredSales, products, platforms }), /* @__PURE__ */ React.createElement(TopProducts, { sales: filteredSales, products }), /* @__PURE__ */ React.createElement(RecentSales, { sales, products, platforms }));
 }
-const hm = (d) => String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+const BKK = "Asia/Bangkok";
+const bkkParts = (d) => { const o = {}; new Intl.DateTimeFormat("en-CA", { timeZone: BKK, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(d)).forEach((p) => { o[p.type] = p.value; }); return o; };
+const bkkDate = (d) => { const o = bkkParts(d); return o.year + "-" + o.month + "-" + o.day; };
+const hm = (d) => { const o = bkkParts(d); return o.hour + ":" + o.minute; };
+const fmtBkkDate = (d) => new Date(d).toLocaleDateString("th-TH", { day: "numeric", month: "short", timeZone: BKK });
 function fmtTime(iso) { return !iso || String(iso).endsWith("T00:00:00.000Z") ? "" : hm(new Date(iso)); }
 function loadTesseract() {
   if (window.Tesseract) return Promise.resolve(window.Tesseract);
@@ -532,7 +536,7 @@ function parseOrderText(raw, products, platforms) {
   return { gross, net, fee, qty, orderNo, date, productId: bestScore >= 2 ? best.id : "", platformId: pl ? pl.id : "" };
 }
 function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales }) {
-  const todayStr = () => { const d = /* @__PURE__ */ new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+  const todayStr = () => bkkDate(/* @__PURE__ */ new Date());
   const r2 = (n) => Math.round((n || 0) * 100) / 100;
   const [productId, setProductId] = useState(initial?.productId || "");
   const [quantity, setQuantity] = useState(initial?.quantity ?? 1);
@@ -568,7 +572,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       setScanMsg((dup ? "⚠ ออเดอร์นี้เคยบันทึกแล้ว! " : "") + "อ่านรูปเสร็จ กรุณาตรวจค่าให้ถูกต้องก่อนบันทึก" + (miss.length ? " (อ่านไม่ได้: " + miss.join(", ") + ")" : ""));
     } catch (err) { setScanMsg("อ่านรูปไม่สำเร็จ (ต้องต่ออินเทอร์เน็ตในครั้งแรก) กรอกเองได้เลย"); }
   }
-  const [date, setDate] = useState(initial ? (() => { const d = new Date(initial.date); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })() : todayStr());
+  const [date, setDate] = useState(initial ? bkkDate(initial.date) : todayStr());
   const product = products.find((p) => p.id === productId);
   const gross = (parseFloat(price) || 0) * (parseFloat(quantity) || 0);
   function resolve(inp) {
@@ -601,7 +605,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       fee: r2(fee.baht),
       otherExpense: r2(other.baht),
       unitCost: initial && initial.productId === productId ? initial.unitCost ?? (product?.cost || 0) : product?.cost || 0,
-      date: (time ? new Date(date + "T" + time) : new Date(date)).toISOString()
+      date: (time ? new Date(date + "T" + time + ":00+07:00") : new Date(date)).toISOString()
     });
     setProductId(""); setQuantity(1); setPrice(""); setPlatformId(""); setCoupon(0);
     setFeeIn({ mode: "pct", value: "0" }); setOtherIn({ mode: "baht", value: "" });
@@ -697,7 +701,7 @@ function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }
         React.createElement("span", { className: "tx-dot", style: { background: pl?.color || "#999" } }),
         React.createElement("div", { className: "tx-info" },
           React.createElement("div", { className: "tx-name" }, p?.name || "สินค้าไม่พบ"),
-          React.createElement("div", { className: "tx-sub" }, pl?.name, " · ", fmtDateShort(s.date), fmtTime(s.date) ? " " + fmtTime(s.date) : "", " · x", s.quantity)),
+          React.createElement("div", { className: "tx-sub" }, pl?.name, " · ", fmtBkkDate(s.date), fmtTime(s.date) ? " " + fmtTime(s.date) : "", " · x", s.quantity)),
         React.createElement("div", { className: "tx-figures" },
           React.createElement("div", { className: "tx-gross", style: s.status ? { color: "#B42318", fontSize: 12 } : void 0 }, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : fmtCurrency(m.gross)),
           React.createElement("div", { className: "tx-profit", style: s.status ? { color: "#B42318" } : void 0 }, s.status ? "ขาดทุน " : "กำไร ", s.status ? fmtCurrency(-m.profit) : fmtCurrency(m.profit))),
@@ -760,7 +764,7 @@ function SlipViewer({ id, name, onClose }) {
 }
 function ExpenseManager({ expenses, onChange }) {
   const pad = (n) => String(n).padStart(2, "0");
-  const todayY = () => { const d = /* @__PURE__ */ new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
+  const todayY = () => bkkDate(/* @__PURE__ */ new Date());
   const [editing, setEditing] = useState(null);
   const [viewSlip, setViewSlip] = useState(null);
   const [sumMonth, setSumMonth] = useState("all");
@@ -851,7 +855,7 @@ function ExpenseManager({ expenses, onChange }) {
 function DataBackup({ products, sales, platforms, expenses, onRestore }) {
   const pad = (n) => String(n).padStart(2, "0");
   const stamp = () => { const d = /* @__PURE__ */ new Date(); return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()); };
-  const ymd = (v) => { const d = new Date(v); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
+  const ymd = (v) => bkkDate(v);
   const salesTable = () => {
     const pm = Object.fromEntries(products.map((p) => [p.id, p]));
     const plm = Object.fromEntries(platforms.map((p) => [p.id, p]));
@@ -908,7 +912,7 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
-    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 24"));
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 25"));
 }
 function ImportModal({ products, platforms, onClose, onImport }) {
   const [step, setStep] = useState(1);
@@ -1212,9 +1216,9 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
       customRange,
       setCustomRange: (c) => setDateState({ ...dateState, customRange: c })
     }
-  ), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E2A\u0E23\u0E38\u0E1B\u0E01\u0E32\u0E23\u0E40\u0E07\u0E34\u0E19"), /* @__PURE__ */ React.createElement("div", { className: "finance-breakdown" }, /* @__PURE__ */ React.createElement("div", { className: "fb-row" }, /* @__PURE__ */ React.createElement("span", null, "Gross Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.gross))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Coupon"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.coupon))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Platform Fee"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.fee))), /* @__PURE__ */ React.createElement("div", { className: "fb-row strong" }, /* @__PURE__ */ React.createElement("span", null, "Net Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.netRevenue))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Cost"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.cost))), /* @__PURE__ */ React.createElement("div", { className: "fb-row profit" }, /* @__PURE__ */ React.createElement("span", null, "Net Profit"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.profit))))), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E40\u0E1B\u0E23\u0E35\u0E22\u0E1A\u0E40\u0E17\u0E35\u0E22\u0E1A\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E32\u0E07"), platformRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "analysis-table-wrap" }, /* @__PURE__ */ React.createElement("table", { className: "analysis-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Platform"), /* @__PURE__ */ React.createElement("th", null, "\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("th", null, "\u0E01\u0E33\u0E44\u0E23"), /* @__PURE__ */ React.createElement("th", null, "Margin"))), /* @__PURE__ */ React.createElement("tbody", null, platformRows.map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "table-dot", style: { background: r.color } }), r.name), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.gross)), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.profit)), /* @__PURE__ */ React.createElement("td", null, r.margin.toFixed(1), "%"))))))), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "Margin Analysis \u0E15\u0E48\u0E2D\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), productRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "margin-list" }, productRows.slice(0, 8).map((r) => {
+  ), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E2A\u0E23\u0E38\u0E1B\u0E01\u0E32\u0E23\u0E40\u0E07\u0E34\u0E19"), /* @__PURE__ */ React.createElement("div", { className: "finance-breakdown" }, /* @__PURE__ */ React.createElement("div", { className: "fb-row" }, /* @__PURE__ */ React.createElement("span", null, "Gross Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.gross))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Coupon"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.coupon))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Platform Fee"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.fee))), /* @__PURE__ */ React.createElement("div", { className: "fb-row strong" }, /* @__PURE__ */ React.createElement("span", null, "Net Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.netRevenue))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Cost"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.cost))), /* @__PURE__ */ React.createElement("div", { className: "fb-row profit" }, /* @__PURE__ */ React.createElement("span", null, "Net Profit"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.profit))))), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E40\u0E1B\u0E23\u0E35\u0E22\u0E1A\u0E40\u0E17\u0E35\u0E22\u0E1A\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E32\u0E07"), platformRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "analysis-table-wrap" }, /* @__PURE__ */ React.createElement("table", { className: "analysis-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Platform"), /* @__PURE__ */ React.createElement("th", null, "\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("th", null, "\u0E01\u0E33\u0E44\u0E23"), /* @__PURE__ */ React.createElement("th", null, "Margin"))), /* @__PURE__ */ React.createElement("tbody", null, platformRows.map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "table-dot", style: { background: r.color } }), r.name), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.gross)), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.profit)), /* @__PURE__ */ React.createElement("td", null, r.margin.toFixed(1), "%"))))))), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "Margin Analysis \u0E15\u0E48\u0E2D\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), productRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "margin-list" }, [...productRows].map((r) => ({ ...r, _m: r.gross > 0 ? r.profit / r.gross * 100 : -999 })).sort((a, b) => b._m - a._m).map((r) => {
     const margin = r.gross > 0 ? r.profit / r.gross * 100 : 0;
-    return /* @__PURE__ */ React.createElement("div", { className: "margin-row", key: r.product.id }, /* @__PURE__ */ React.createElement("div", { className: "margin-name" }, r.product.name), /* @__PURE__ */ React.createElement("div", { className: "margin-bar-track" }, /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "margin-row", key: r.product.id }, /* @__PURE__ */ React.createElement("div", { className: "margin-name" }, r.product.name, React.createElement("div", { style: { fontSize: 11.5, fontWeight: 400, color: "#68706B" } }, "ยอดขาย " + fmtCurrency(r.gross) + " · กำไร " + fmtCurrency(r.profit))), /* @__PURE__ */ React.createElement("div", { className: "margin-bar-track" }, /* @__PURE__ */ React.createElement(
       "div",
       {
         className: "margin-bar-fill",
@@ -1225,10 +1229,10 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
 }
 function PlatformFeeReport({ sales, products, platforms }) {
   const pad = (n) => String(n).padStart(2, "0");
-  const ymd = (d) => { const x = new Date(d); return x.getFullYear() + "-" + pad(x.getMonth() + 1) + "-" + pad(x.getDate()); };
+  const ymd = (d) => bkkDate(d);
   const now = /* @__PURE__ */ new Date();
   const [mode, setMode] = useState("day");
-  const [from, setFrom] = useState(now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-01");
+  const [from, setFrom] = useState(bkkDate(now).slice(0, 8) + "01");
   const [to, setTo] = useState(ymd(now));
   const [limit, setLimit] = useState(14);
   const pct = (f, g) => g > 0 ? Math.round(f / g * 1000) / 10 + "%" : "-";
@@ -1828,11 +1832,11 @@ var CSS = `
 .table-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 7px; }
 
 .margin-list { display: flex; flex-direction: column; gap: 11px; }
-.margin-row { display: flex; align-items: center; gap: 10px; }
-.margin-name { font-size: 12.5px; font-weight: 600; width: 84px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.margin-bar-track { flex: 1; height: 7px; background: var(--bg); border-radius: 20px; overflow: hidden; }
+.margin-row { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; align-items: center; }
+.margin-name { grid-column: 1; grid-row: 1; font-size: 13px; font-weight: 600; min-width: 0; white-space: normal; word-break: break-word; line-height: 1.35; }
+.margin-bar-track { grid-column: 1 / -1; grid-row: 2; height: 7px; background: var(--bg); border-radius: 20px; overflow: hidden; }
 .margin-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-light)); border-radius: 20px; }
-.margin-pct { font-size: 12px; font-weight: 700; width: 48px; text-align: right; flex-shrink: 0; }
+.margin-pct { grid-column: 2; grid-row: 1; font-size: 14px; font-weight: 700; text-align: right; }
 
 /* Responsive */
 @media (min-width: 900px) {
