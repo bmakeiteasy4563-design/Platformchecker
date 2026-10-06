@@ -46,7 +46,8 @@ var NAV_ITEMS = [
   { id: "dashboard", label: "\u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21", icon: Home },
   { id: "sales", label: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01", icon: Plus },
   { id: "products", label: "\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32", icon: Package },
-  { id: "analytics", label: "\u0E27\u0E34\u0E40\u0E04\u0E23\u0E32\u0E30\u0E2B\u0E4C", icon: BarChart2 }
+  { id: "analytics", label: "\u0E27\u0E34\u0E40\u0E04\u0E23\u0E32\u0E30\u0E2B\u0E4C", icon: BarChart2 },
+  { id: "recon", label: "ตรวจเช็ค", icon: Check }
 ];
 var DATE_PRESETS = [
   { id: "today", label: "\u0E27\u0E31\u0E19\u0E19\u0E35\u0E49" },
@@ -691,6 +692,206 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       row("กำไร" + (gross > 0 ? pctTxt(profit / gross * 100) : ""), fmtCurrency(profit), "ls-profit")),
     React.createElement("button", { className: "btn btn-primary btn-block", disabled: !canSubmit, onClick: submit }, React.createElement(Check, { size: 16 }), " บันทึกการขาย"), onCancel && React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: onCancel }, "ยกเลิก"));
 }
+const r2g = (n) => Math.round((n || 0) * 100) / 100;
+function allocTo(rows, total, w) {
+  const ws = rows.map(w);
+  const sum = ws.reduce((a, b) => a + b, 0);
+  let rest = r2g(total);
+  return rows.map((_, i) => { const v = i === rows.length - 1 ? rest : r2g(sum > 0 ? total * ws[i] / sum : total / rows.length); rest = r2g(rest - v); return v; });
+}
+function buildOrders(sales) {
+  const map = {};
+  sales.forEach((s) => { if (s.status) return; const k = s.orderId || s.id; (map[k] || (map[k] = { key: k, rows: [] })).rows.push(s); });
+  return Object.values(map).map((o) => {
+    const r0 = o.rows[0];
+    const expected = o.rows.reduce((a, s) => a + (s.price || 0) * (s.quantity || 0) - (s.coupon || 0) - (s.fee || 0), 0);
+    const paid = o.rows.every((s) => s.paidDate);
+    const paidAmount = o.rows.reduce((a, s) => a + (s.paidAmount || 0), 0);
+    return { ...o, date: r0.date, platformId: r0.platformId, orderNo: r0.orderNo || "", expected: r2g(expected), fee: r2g(o.rows.reduce((a, s) => a + (s.fee || 0), 0)), paid, paidDate: paid ? r0.paidDate : "", paidAmount: r2g(paidAmount), diff: paid ? r2g(paidAmount - expected) : 0 };
+  }).sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+function parseCsv(text) {
+  const rows = []; let row = [], cur = "", q = false;
+  text = text.replace(/^\ufeff/, "");
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === ",") { row.push(cur); cur = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(cur); rows.push(row); row = []; cur = ""; }
+    else cur += c;
+  }
+  if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+const ORDER_RE = /หมายเลขคำสั่งซื้อ|เลขคำสั่งซื้อ|หมายเลขออเดอร์|order\s*(id|no|number|sn)|order_id|หมายเลขคำสั่ง/i;
+async function readReportFile(file) {
+  if (/\.csv$/i.test(file.name)) { const rows = parseCsv(await file.text()); const hi = Math.max(0, rows.slice(0, 40).findIndex((r) => r.some((c) => ORDER_RE.test(String(c))))); return { rows, hi, sheet: "" }; }
+  const X = window.XLSX || (await import("https://esm.sh/xlsx@0.18.5")).default || (await import("https://esm.sh/xlsx@0.18.5"));
+  const wb = X.read(await file.arrayBuffer(), { type: "array" });
+  let first = null;
+  for (const name of wb.SheetNames) {
+    const rows = X.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: false, defval: "" });
+    if (!first) first = { rows, hi: 0, sheet: name };
+    const hi = rows.slice(0, 40).findIndex((r) => r.some((c) => ORDER_RE.test(String(c))));
+    if (hi >= 0) return { rows, hi, sheet: name };
+  }
+  return first;
+}
+function ReportImport({ orders, platforms, onUpdates, onClose }) {
+  const [data, setData] = useState(null);
+  const [map, setMap] = useState({ order: -1, payout: -1, fee: -1, date: -1 });
+  const [platformId, setPlatformId] = useState("");
+  const [res, setRes] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const num = (v) => { const x = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, "")); return isNaN(x) ? 0 : x; };
+  const nk = (v) => String(v ?? "").replace(/[\s"'=]/g, "").toUpperCase();
+  const pdate = (v) => {
+    const t = String(v || "");
+    let m = t.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return m[1] + "-" + m[2] + "-" + m[3];
+    m = t.match(/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})/);
+    if (m) { let y = +m[3]; if (y > 2400) y -= 543; return y + "-" + String(m[2]).padStart(2, "0") + "-" + String(m[1]).padStart(2, "0"); }
+    return "";
+  };
+  async function pick(e) {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true); setMsg(""); setRes(null);
+    try {
+      const d = await readReportFile(f);
+      const headers = (d.rows[d.hi] || []).map((h) => String(h));
+      const g = (re) => headers.findIndex((h) => re.test(h));
+      setMap({
+        order: g(ORDER_RE),
+        payout: g(/(จำนวนเงิน|ยอดเงิน)[^,]{0,12}(โอน|ได้รับ|ปล่อย|สุทธิ)|ยอดโอน|ยอดสุทธิ|total\s*(released|payout|settlement)|released\s*amount|settlement\s*amount|net\s*(amount|payout|income)|payout/i),
+        fee: g(/ค่าธรรมเนียม(ทั้งหมด|รวม)|total\s*fee/i),
+        date: g(/วันที่(โอน|ชำระเงิน|ปล่อย|ได้รับ)|release\s*date|payout\s*date|settle/i)
+      });
+      setData({ ...d, headers });
+    } catch (err) { setMsg("อ่านไฟล์ไม่สำเร็จ (ไฟล์ .xlsx ต้องต่ออินเทอร์เน็ตในครั้งแรก หรือบันทึกเป็น .csv แล้วลองใหม่)"); }
+    setBusy(false);
+  }
+  function match() {
+    const rep = {};
+    data.rows.slice(data.hi + 1).forEach((r) => {
+      const k = nk(r[map.order]);
+      if (!k) return;
+      const o = rep[k] || (rep[k] = { payout: 0, fee: 0, date: "" });
+      o.payout += map.payout >= 0 ? num(r[map.payout]) : 0;
+      o.fee += map.fee >= 0 ? Math.abs(num(r[map.fee])) : 0;
+      if (map.date >= 0 && !o.date) o.date = pdate(r[map.date]);
+    });
+    const mine = orders.filter((o) => o.platformId === platformId);
+    const appMap = {};
+    mine.forEach((o) => { if (o.orderNo) appMap[nk(o.orderNo)] = o; });
+    const matched = [], missingApp = [];
+    Object.entries(rep).forEach(([k, r]) => { const o = appMap[k]; if (o) matched.push({ o, r, diff: r2g(r.payout - o.expected), feeDiff: map.fee >= 0 ? r2g(r.fee - o.fee) : 0 }); else missingApp.push({ k, r }); });
+    const missingRep = mine.filter((o) => o.orderNo && !o.paid && !rep[nk(o.orderNo)]);
+    setRes({ matched, missingApp, missingRep, noNo: mine.filter((o) => !o.orderNo).length, total: Object.keys(rep).length });
+  }
+  function applyPaid() {
+    const today = bkkDate(/* @__PURE__ */ new Date());
+    const ups = res.matched.filter((m) => m.r.payout > 0).map((m) => ({ key: m.o.key, paid: { date: m.r.date || today, amount: m.r.payout } }));
+    onUpdates(ups); setMsg("บันทึกรับเงินแล้ว " + ups.length + " ออเดอร์");
+  }
+  function applyFee() {
+    const ups = res.matched.filter((m) => Math.abs(m.feeDiff) > 1).map((m) => ({ key: m.o.key, fee: m.r.fee }));
+    onUpdates(ups); setMsg("ปรับค่าธรรมเนียมแล้ว " + ups.length + " ออเดอร์");
+  }
+  const sel = (label, key, optional) => React.createElement("label", { className: "field" }, React.createElement("span", null, label),
+    React.createElement("select", { value: map[key], onChange: (e) => setMap({ ...map, [key]: parseInt(e.target.value, 10) }) },
+      React.createElement("option", { value: -1 }, optional ? "- ไม่ใช้ -" : "- เลือกคอลัมน์ -"),
+      data.headers.map((h, i) => h ? React.createElement("option", { key: i, value: i }, h) : null)));
+  const list = (title, items, render) => items.length > 0 && React.createElement("div", { style: { marginTop: 10 } },
+    React.createElement("div", { style: { fontWeight: 700, fontSize: 13, marginBottom: 4 } }, title + " (" + items.length + ")"),
+    items.slice(0, 15).map(render),
+    items.length > 15 && React.createElement("div", { style: { fontSize: 12, color: "#99A09B" } }, "…และอีก " + (items.length - 15) + " รายการ"));
+  const line = (a, b, red) => React.createElement("div", { key: a, style: { display: "flex", justifyContent: "space-between", fontSize: 12.5, padding: "2px 0", color: red ? "#B42318" : void 0 } }, React.createElement("span", null, a), React.createElement("span", null, b));
+  const bad = res ? res.matched.filter((m) => Math.abs(m.diff) > 1) : [];
+  return React.createElement("div", { className: "modal-overlay", onClick: onClose }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body", style: { maxHeight: "85vh", overflowY: "auto" } },
+    React.createElement("div", { className: "section-title", style: { marginBottom: 8 } }, "นำเข้ารายงานจากแพลตฟอร์ม"),
+    React.createElement("div", { style: { fontSize: 12, color: "#68706B", marginBottom: 8 } }, "ใช้ไฟล์รายงานรายได้/การโอนเงินจาก Seller Center (.xlsx หรือ .csv) แอปจับคู่ด้วยเลขออเดอร์"),
+    React.createElement("label", { className: "field" }, React.createElement("span", null, "แพลตฟอร์มของรายงานนี้"),
+      React.createElement("select", { value: platformId, onChange: (e) => { setPlatformId(e.target.value); setRes(null); } }, React.createElement("option", { value: "" }, "เลือก Platform"), platforms.map((p) => React.createElement("option", { key: p.id, value: p.id }, p.name)))),
+    React.createElement("label", { className: "btn btn-outline btn-block", style: { cursor: "pointer", textAlign: "center", marginTop: 8 } }, busy ? "กำลังอ่านไฟล์…" : data ? "เลือกไฟล์ใหม่" : "เลือกไฟล์รายงาน", React.createElement("input", { type: "file", accept: ".xlsx,.xls,.csv", onChange: pick, style: { display: "none" } })),
+    msg && React.createElement("div", { style: { fontSize: 12.5, margin: "8px 0", color: "#0F2B26", fontWeight: 600 } }, msg),
+    data && React.createElement("div", { style: { marginTop: 10 } },
+      React.createElement("div", { style: { fontSize: 12, color: "#68706B", marginBottom: 6 } }, "ตรวจว่าแอปเดาคอลัมน์ถูกไหม (" + (data.rows.length - data.hi - 1) + " แถว" + (data.sheet ? " · ชีต " + data.sheet : "") + ")"),
+      React.createElement("div", { className: "form-grid" }, sel("คอลัมน์เลขออเดอร์", "order", false), sel("คอลัมน์ยอดเงินที่ได้รับ/โอน", "payout", false), sel("คอลัมน์ค่าธรรมเนียมรวม (ถ้ามี)", "fee", true), sel("คอลัมน์วันที่โอน (ถ้ามี)", "date", true)),
+      React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 10 }, disabled: !platformId || map.order < 0 || map.payout < 0, onClick: match }, "จับคู่ออเดอร์")),
+    res && React.createElement("div", { style: { marginTop: 12, borderTop: "1px solid #EEF0ED", paddingTop: 10 } },
+      line("ในรายงาน", res.total + " ออเดอร์"), line("จับคู่กับในแอปได้", res.matched.length + " ออเดอร์"),
+      line("ยอดตรง (ต่าง ≤ ฿1)", (res.matched.length - bad.length) + " ออเดอร์"), line("ยอดไม่ตรง", bad.length + " ออเดอร์", bad.length > 0),
+      line("อยู่ในรายงานแต่ไม่มีในแอป", res.missingApp.length + " ออเดอร์", res.missingApp.length > 0),
+      line("อยู่ในแอป (ยังไม่รับเงิน) แต่ไม่มีในรายงาน", res.missingRep.length + " ออเดอร์"),
+      res.noNo > 0 && line("ออเดอร์ที่ไม่มีเลขออเดอร์ จับคู่ไม่ได้", res.noNo + " ออเดอร์"),
+      list("ยอดเงินไม่ตรง", bad, (m) => line(m.o.orderNo, "แอป ฿" + m.o.expected + " / รายงาน ฿" + m.r.payout + " (ต่าง " + (m.diff > 0 ? "+" : "") + m.diff + ")", true)),
+      list("ไม่มีในแอป (ควรลงเพิ่ม)", res.missingApp, (m) => line(m.k, "฿" + m.r.payout)),
+      list("ไม่พบในรายงาน", res.missingRep, (o) => line(o.orderNo, "฿" + o.expected)),
+      React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 12 }, disabled: res.matched.length === 0, onClick: applyPaid }, "ทำเครื่องหมาย \"รับเงินแล้ว\" ตามรายงาน (" + res.matched.length + ")"),
+      map.fee >= 0 && res.matched.some((m) => Math.abs(m.feeDiff) > 1) && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: applyFee }, "ปรับค่าธรรมเนียมตามรายงาน (" + res.matched.filter((m) => Math.abs(m.feeDiff) > 1).length + " ออเดอร์ที่ต่างกัน)")),
+    React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 10 }, onClick: onClose }, "ปิด"))));
+}
+function ReconPage({ sales, products, platforms, onUpdates }) {
+  const [pf, setPf] = useState("all");
+  const [flt, setFlt] = useState("unpaid");
+  const [limit, setLimit] = useState(20);
+  const [payFor, setPayFor] = useState(null);
+  const [form, setForm] = useState({ date: "", amount: "" });
+  const [showImport, setShowImport] = useState(false);
+  const orders = useMemo(() => buildOrders(sales), [sales]);
+  const pm = Object.fromEntries(products.map((p) => [p.id, p]));
+  const plm = Object.fromEntries(platforms.map((p) => [p.id, p]));
+  const sumRows = platforms.map((pl) => {
+    const os = orders.filter((o) => o.platformId === pl.id);
+    const un = os.filter((o) => !o.paid), pd = os.filter((o) => o.paid);
+    return { pl, count: os.length, unCount: un.length, waiting: un.reduce((a, o) => a + o.expected, 0), received: pd.reduce((a, o) => a + o.paidAmount, 0), diff: pd.reduce((a, o) => a + o.diff, 0) };
+  }).filter((x) => x.count > 0);
+  const list = orders.filter((o) => (pf === "all" || o.platformId === pf) && (flt === "all" || (flt === "unpaid" && !o.paid) || (flt === "paid" && o.paid) || (flt === "diff" && o.paid && Math.abs(o.diff) > 1)));
+  const open = (o) => { setPayFor(o); setForm({ date: o.paid ? o.paidDate : bkkDate(/* @__PURE__ */ new Date()), amount: String(o.paid ? o.paidAmount : o.expected) }); };
+  const chip = (id, label) => React.createElement("button", { key: id, className: "toggle" + (flt === id ? " active" : ""), onClick: () => { setFlt(id); setLimit(20); } }, label);
+  return React.createElement("div", { className: "page-inner" },
+    React.createElement(Header, { title: "ตรวจเช็ค", subtitle: "เทียบกับยอดเงินเข้าและรายงานแพลตฟอร์ม", lowStockCount: 0 }),
+    React.createElement("button", { className: "btn btn-primary btn-block", onClick: () => setShowImport(true) }, "นำเข้ารายงานจากแพลตฟอร์ม (จับคู่ออเดอร์)"),
+    React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
+      React.createElement("div", { className: "section-title", style: { marginBottom: 8 } }, "สรุปเงินเข้าตามแพลตฟอร์ม"),
+      sumRows.length === 0 && React.createElement("div", { className: "mini-empty" }, "ยังไม่มีออเดอร์"),
+      sumRows.map((x) => React.createElement("div", { key: x.pl.id, style: { padding: "8px 0", borderTop: "1px solid #EEF0ED" } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 14 } }, React.createElement("span", { style: { width: 10, height: 10, borderRadius: 5, background: x.pl.color } }), x.pl.name, React.createElement("span", { style: { fontWeight: 400, fontSize: 12, color: "#68706B" } }, x.count + " ออเดอร์")),
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 4 } }, React.createElement("span", null, "รอรับเงิน (" + x.unCount + ")"), React.createElement("span", { style: { fontWeight: 700 } }, fmtCurrency(x.waiting))),
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 13 } }, React.createElement("span", null, "รับแล้ว"), React.createElement("span", null, fmtCurrency(x.received))),
+        Math.abs(x.diff) > 1 && React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 13, color: x.diff < 0 ? "#B42318" : "#1A7F4B" } }, React.createElement("span", null, "ส่วนต่างจากที่คำนวณ"), React.createElement("span", null, (x.diff > 0 ? "+" : "") + fmtCurrency(x.diff)))))),
+    React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
+      React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 } },
+        React.createElement("div", { className: "toggle-group" }, chip("unpaid", "รอรับเงิน"), chip("paid", "รับแล้ว"), chip("diff", "ยอดไม่ตรง"), chip("all", "ทั้งหมด")),
+        React.createElement("select", { value: pf, onChange: (e) => { setPf(e.target.value); setLimit(20); }, style: { fontSize: 13, padding: "4px 8px", borderRadius: 8 } }, React.createElement("option", { value: "all" }, "ทุกแพลตฟอร์ม"), platforms.map((p) => React.createElement("option", { key: p.id, value: p.id }, p.name)))),
+      list.length === 0 && React.createElement("div", { className: "mini-empty" }, "ไม่มีรายการ"),
+      list.slice(0, limit).map((o) => {
+        const names = o.rows.map((s) => (pm[s.productId] || {}).name || "?").join(", ");
+        const pl = plm[o.platformId];
+        return React.createElement("div", { key: o.key, style: { display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderTop: "1px solid #EEF0ED" } },
+          React.createElement("span", { style: { width: 9, height: 9, borderRadius: 5, background: pl?.color || "#999", flexShrink: 0 } }),
+          React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+            React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, whiteSpace: "normal", wordBreak: "break-word" } }, o.orderNo || names),
+            React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, fmtBkkDate(o.date) + " · คาดว่าได้ " + fmtCurrency(o.expected)),
+            o.paid && React.createElement("div", { style: { fontSize: 12, color: Math.abs(o.diff) > 1 ? "#B42318" : "#1A7F4B" } }, "✓ รับแล้ว " + fmtCurrency(o.paidAmount) + " (" + fmtBkkDate(o.paidDate) + ")" + (Math.abs(o.diff) > 1 ? " ต่าง " + (o.diff > 0 ? "+" : "") + o.diff : ""))),
+          React.createElement("button", { className: "btn btn-ghost", style: { padding: "4px 10px", fontSize: 12, minHeight: 0 }, onClick: () => open(o) }, o.paid ? "แก้ไข" : "รับเงิน"));
+      }),
+      list.length > limit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: () => setLimit(limit + 20) }, "แสดงเพิ่ม")),
+    payFor && React.createElement("div", { className: "modal-overlay", onClick: () => setPayFor(null) }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body" },
+      React.createElement("div", { className: "section-title", style: { marginBottom: 6 } }, "บันทึกรับเงิน"),
+      React.createElement("div", { style: { fontSize: 12.5, color: "#68706B", marginBottom: 10 } }, (payFor.orderNo || "ออเดอร์") + " · คาดว่าได้ " + fmtCurrency(payFor.expected)),
+      React.createElement("div", { className: "form-grid" },
+        React.createElement("label", { className: "field" }, React.createElement("span", null, "วันที่ได้รับเงิน"), React.createElement("input", { type: "date", value: form.date, onChange: (e) => setForm({ ...form, date: e.target.value }) })),
+        React.createElement("label", { className: "field" }, React.createElement("span", null, "ยอดที่ได้รับจริง (บาท)"), React.createElement("input", { type: "number", min: "0", step: "any", inputMode: "decimal", value: form.amount, onChange: (e) => setForm({ ...form, amount: e.target.value }) }))),
+      React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 12 }, disabled: !form.date || !(parseFloat(form.amount) >= 0) || form.amount === "", onClick: () => { onUpdates([{ key: payFor.key, paid: { date: form.date, amount: parseFloat(form.amount) } }]); setPayFor(null); } }, "บันทึก"),
+      payFor.paid && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: () => { onUpdates([{ key: payFor.key, paid: null }]); setPayFor(null); } }, "ล้างสถานะรับเงิน"),
+      React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: () => setPayFor(null) }, "ยกเลิก")))),
+    showImport && React.createElement(ReportImport, { orders, platforms, onUpdates, onClose: () => setShowImport(false) }));
+}
 function StatusModal({ sale, productName, onClose, onSave }) {
   const [status, setStatus] = useState(sale.status || "ok");
   const [restock, setRestock] = useState(sale.status === "returned" ? !!sale.restocked : true);
@@ -950,7 +1151,7 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
-    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 27"));
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 28"));
 }
 function ImportModal({ products, platforms, onClose, onImport }) {
   const [step, setStep] = useState(1);
@@ -1521,7 +1722,7 @@ function App() {
   function handleEditSale(u) {
     const old = sales.find((x) => x.id === u.id);
     if (!old) return;
-    setSales((prev) => prev.map((x) => x.id === u.id ? u : x));
+    setSales((prev) => prev.map((x) => x.id === u.id ? { ...u, paidDate: x.paidDate, paidAmount: x.paidAmount } : x));
     setProducts((prev) => prev.map((p) => {
       let st = p.stock;
       if (p.id === old.productId) st += old.quantity;
@@ -1556,6 +1757,26 @@ function App() {
       if (have.includes(nz(text))) return p;
       return { ...p, aliases: [p.aliases || "", text].filter(Boolean).join("\n") };
     }));
+  }
+  function handleOrderUpdates(updates) {
+    const byKey = {};
+    updates.forEach((u) => { byKey[u.key] = u; });
+    setSales((prev) => {
+      const groups = {};
+      prev.forEach((x) => { const k = x.orderId || x.id; (groups[k] || (groups[k] = [])).push({ ...x }); });
+      Object.keys(byKey).forEach((k) => {
+        const rows = groups[k];
+        if (!rows) return;
+        const u = byKey[k];
+        const normal = rows.filter((x) => !x.status);
+        if (u.fee != null && normal.length) { const fs = allocTo(normal, u.fee, (x) => (x.price || 0) * (x.quantity || 0)); normal.forEach((x, i) => { x.fee = fs[i]; }); }
+        if (u.paid === null) rows.forEach((x) => { delete x.paidDate; delete x.paidAmount; });
+        else if (u.paid && normal.length) { const ps = allocTo(normal, u.paid.amount, (x) => Math.max(0, (x.price || 0) * (x.quantity || 0) - (x.coupon || 0) - (x.fee || 0))); normal.forEach((x, i) => { x.paidDate = u.paid.date; x.paidAmount = ps[i]; }); }
+      });
+      const byId = {};
+      Object.values(groups).forEach((rows) => rows.forEach((x) => { byId[x.id] = x; }));
+      return prev.map((x) => byId[x.id] || x);
+    });
   }
   function handleDeleteSale(id) {
     const sale = sales.find((x) => x.id === id);
@@ -1617,7 +1838,7 @@ function App() {
       onExpensesChange: setExpenses,
       onRestore: handleRestore
     }
-  ), activeTab === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ProductsPage, { products, onSave: handleSaveProduct, onDelete: handleDeleteProduct }), /* @__PURE__ */ React.createElement(SettingsPanel, { products, sales, platforms, setPlatforms, onRestore: handleRestore })), activeTab === "analytics" && /* @__PURE__ */ React.createElement(
+  ), activeTab === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ProductsPage, { products, onSave: handleSaveProduct, onDelete: handleDeleteProduct }), /* @__PURE__ */ React.createElement(SettingsPanel, { products, sales, platforms, setPlatforms, onRestore: handleRestore })), activeTab === "recon" && /* @__PURE__ */ React.createElement(ReconPage, { sales, products, platforms, onUpdates: handleOrderUpdates }), activeTab === "analytics" && /* @__PURE__ */ React.createElement(
     AnalyticsPage,
     {
       sales,
