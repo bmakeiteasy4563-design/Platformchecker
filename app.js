@@ -575,12 +575,19 @@ function parseOrderText(raw, products, platforms) {
     if (t.length > 2 || !/^[A-Za-z0-9._\-]{4,30}$/.test(last) || /^[-.]?[B฿]?\d+$/i.test(last) || /^[-.]/.test(last)) return "";
     return last.toUpperCase() === orderNo ? "" : last;
   };
+  const pw = new Set();
+  products.forEach((p) => [p.name, ...String(p.aliases || "").split("\n")].forEach((x) => String(x || "").toUpperCase().split(/[^A-Z0-9]+/).forEach((w) => { if (w) pw.add(w); })));
+  const okTok = (t) => t && /[A-Za-z]/.test(t) && !pw.has(t.toUpperCase());
+  const oi = orderNo ? nl.findIndex((l) => l.toUpperCase().replace(/\s+/g, "").includes(orderNo)) : -1;
   let customer = "";
-  const withDigit = nl.filter((l) => !bad.test(l)).map(userTok).find((t) => t && /[A-Za-z]/.test(t) && /\d/.test(t));
-  if (withDigit) customer = withDigit;
-  else for (let k = ni - 1; k >= Math.max(0, ni - 2) && !customer; k--) {
-    if (k >= 0 && !bad.test(nl[k])) { const t = userTok(nl[k]); if (t && /[A-Za-z]/.test(t)) customer = t; }
+  if (oi > 0) {
+    for (let k = oi - 1; k >= Math.max(0, oi - 8) && !customer; k--) {
+      if (bad.test(nl[k])) continue;
+      const t = userTok(nl[k]);
+      if (okTok(t)) customer = t;
+    }
   }
+  if (!customer) customer = nl.filter((l) => !bad.test(l)).map(userTok).find((t) => okTok(t) && /\d/.test(t)) || "";
   return { gross, net, fee, qty, orderNo, date, orderAt, customer, productId, cands, scanName, platformId: pl ? pl.id : "" };
 }
 function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales, onLearn }) {
