@@ -572,7 +572,7 @@ function parseOrderText(raw, products, platforms) {
   const userTok = (l) => {
     const t = l.replace(/[\u0E00-\u0E7F]/g, " ").replace(/[^A-Za-z0-9._\-]+$/, "").trim().split(/\s+/).filter(Boolean);
     const last = t[t.length - 1] || "";
-    if (t.length > 2 || !/^[A-Za-z0-9._\-]{4,30}$/.test(last) || /^[-.]?[B฿]?\d+$/i.test(last) || /^[-.]/.test(last)) return "";
+    if (t.slice(0, -1).some((x) => x.length > 3) || !/^[A-Za-z0-9._\-]{4,30}$/.test(last) || /^[-.]?[B฿]?\d+$/i.test(last) || /^[-.]/.test(last)) return "";
     return last.toUpperCase() === orderNo ? "" : last;
   };
   const pw = new Set();
