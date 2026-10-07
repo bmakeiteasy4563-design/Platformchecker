@@ -921,6 +921,7 @@ function StatusModal({ sale, productName, onClose, onSave }) {
 function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }) {
   const [limit, setLimit] = useState(20);
   const [statusFor, setStatusFor] = useState(null);
+  const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null);
   const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
   const platformMap = Object.fromEntries(platforms.map((p) => [p.id, p]));
@@ -928,17 +929,28 @@ function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }
   const sizes = {};
   sales.forEach((x) => { if (x.orderId) sizes[x.orderId] = (sizes[x.orderId] || 0) + 1; });
   if (rows.length === 0) return null;
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = (s) => {
+    const p = productMap[s.productId] || {}, pl = platformMap[s.platformId] || {};
+    return [s.orderNo, p.name, p.sku, p.aliases, pl.name, bkkDate(s.date), fmtBkkDate(s.date), s.price, (s.price || 0) * (s.quantity || 0)].join(" ").toLowerCase();
+  };
+  const hit = new Set(terms.length ? rows.filter((s) => { const h = hay(s); return terms.every((t) => h.includes(t)); }).map((s) => s.orderId || s.id) : []);
+  const shown = terms.length ? rows.filter((s) => hit.has(s.orderId || s.id)) : rows;
   return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
-    React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "รายการที่บันทึกไว้"),
-    React.createElement("div", { className: "tx-list" }, rows.slice(0, limit).map((s) => {
+    React.createElement("div", { className: "section-title", style: { marginBottom: 8 } }, "รายการที่บันทึกไว้ (" + rows.length + ")"),
+    React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10 } },
+      React.createElement("input", { type: "search", value: q, placeholder: "ค้นหา เลขออเดอร์ / ชื่อสินค้า / แพลตฟอร์ม / วันที่ / ยอด", onChange: (e) => setQ(e.target.value), style: { flex: 1, minWidth: 0, padding: "10px 12px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
+      q && React.createElement("button", { className: "btn btn-ghost", onClick: () => setQ("") }, "ล้าง")),
+    terms.length > 0 && React.createElement("div", { style: { fontSize: 12.5, color: "#68706B", marginBottom: 8 } }, shown.length === 0 ? "ไม่พบรายการที่ตรงกับคำค้นหา" : "พบ " + shown.length + " รายการ (" + hit.size + " ออเดอร์)"),
+    React.createElement("div", { className: "tx-list" }, shown.slice(0, terms.length ? 100 : limit).map((s) => {
       const p = productMap[s.productId];
       const pl = platformMap[s.platformId];
       const m = computeSaleMetrics(s, p, pl);
       return React.createElement("div", { className: "tx-row", key: s.id },
         React.createElement("span", { className: "tx-dot", style: { background: pl?.color || "#999" } }),
         React.createElement("div", { className: "tx-info" },
-          React.createElement("div", { className: "tx-name" }, p?.name || "สินค้าไม่พบ"),
-          React.createElement("div", { className: "tx-sub" }, pl?.name, " · ", fmtBkkDate(s.date), fmtTime(s.date) ? " " + fmtTime(s.date) : "", " · x", s.quantity, sizes[s.orderId] > 1 ? " · ออเดอร์ " + sizes[s.orderId] + " รายการ" : "")),
+          React.createElement("div", { className: "tx-name", style: { whiteSpace: "normal", wordBreak: "break-word" } }, p?.name || "สินค้าไม่พบ"),
+          React.createElement("div", { className: "tx-sub" }, pl?.name, " · ", fmtBkkDate(s.date), fmtTime(s.date) ? " " + fmtTime(s.date) : "", " · x", s.quantity, s.orderNo ? " · #" + s.orderNo : "", sizes[s.orderId] > 1 ? " · ออเดอร์ " + sizes[s.orderId] + " รายการ" : "")),
         React.createElement("div", { className: "tx-figures" },
           React.createElement("div", { className: "tx-gross", style: s.status ? { color: "#B42318", fontSize: 12 } : void 0 }, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : fmtCurrency(m.gross)),
           React.createElement("div", { className: "tx-profit", style: s.status ? { color: "#B42318" } : void 0 }, s.status ? "ขาดทุน " : "กำไร ", s.status ? fmtCurrency(-m.profit) : fmtCurrency(m.profit))),
@@ -948,7 +960,7 @@ function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }
           if (window.confirm("ลบรายการนี้? สต็อกสินค้าจะถูกคืนกลับ")) onDelete(s.id);
         } }, React.createElement(Trash2, { size: 14 })));
     })),
-    rows.length > limit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 12 }, onClick: () => setLimit(limit + 20) }, "แสดงเพิ่ม"), editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body" }, React.createElement(QuickSaleForm, { products, platforms, initial: editing, onCancel: () => setEditing(null), onSubmit: (u) => { onEdit(u); setEditing(null); } })))), statusFor && React.createElement(StatusModal, { sale: statusFor, productName: (productMap[statusFor.productId] || {}).name || "", onClose: () => setStatusFor(null), onSave: (patch) => { onStatus(statusFor.id, patch); setStatusFor(null); } }));
+    !terms.length && rows.length > limit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 12 }, onClick: () => setLimit(limit + 20) }, "แสดงเพิ่ม"), editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body" }, React.createElement(QuickSaleForm, { products, platforms, initial: editing, onCancel: () => setEditing(null), onSubmit: (u) => { onEdit(u); setEditing(null); } })))), statusFor && React.createElement(StatusModal, { sale: statusFor, productName: (productMap[statusFor.productId] || {}).name || "", onClose: () => setStatusFor(null), onSave: (patch) => { onStatus(statusFor.id, patch); setStatusFor(null); } }));
 }
 function PlatformManager({ platforms, sales, onChange }) {
   const [editing, setEditing] = useState(null);
@@ -1151,7 +1163,7 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
-    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 28"));
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 29"));
 }
 function ImportModal({ products, platforms, onClose, onImport }) {
   const [step, setStep] = useState(1);
