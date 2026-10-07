@@ -569,8 +569,18 @@ function parseOrderText(raw, products, platforms) {
   const orderAt = (li >= 0 ? parseDT(orig.slice(li, li + 70)) : "") || parseDT(orig);
   const nl = orig.split("\n").map((l) => l.trim()).filter(Boolean);
   const ni = nl.findIndex((l) => l === nameLine);
-  const cm = ni > 0 ? nl[ni - 1].match(/([A-Za-z0-9._\-]{4,})\s*$/) : null;
-  const customer = cm && !bad.test(nl[ni - 1]) ? cm[1] : "";
+  const userTok = (l) => {
+    const t = l.replace(/[\u0E00-\u0E7F]/g, " ").replace(/[^A-Za-z0-9._\-]+$/, "").trim().split(/\s+/).filter(Boolean);
+    const last = t[t.length - 1] || "";
+    if (t.length > 2 || !/^[A-Za-z0-9._\-]{4,30}$/.test(last) || /^[-.]?[B฿]?\d+$/i.test(last) || /^[-.]/.test(last)) return "";
+    return last.toUpperCase() === orderNo ? "" : last;
+  };
+  let customer = "";
+  const withDigit = nl.filter((l) => !bad.test(l)).map(userTok).find((t) => t && /[A-Za-z]/.test(t) && /\d/.test(t));
+  if (withDigit) customer = withDigit;
+  else for (let k = ni - 1; k >= Math.max(0, ni - 2) && !customer; k--) {
+    if (k >= 0 && !bad.test(nl[k])) { const t = userTok(nl[k]); if (t && /[A-Za-z]/.test(t)) customer = t; }
+  }
   return { gross, net, fee, qty, orderNo, date, orderAt, customer, productId, cands, scanName, platformId: pl ? pl.id : "" };
 }
 function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales, onLearn }) {
