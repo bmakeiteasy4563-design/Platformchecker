@@ -569,11 +569,52 @@ function parseOrderText(raw, products, platforms) {
   const orderAt = (li >= 0 ? parseDT(orig.slice(li, li + 70)) : "") || parseDT(orig);
   const nl = orig.split("\n").map((l) => l.trim()).filter(Boolean);
   const ni = nl.findIndex((l) => l === nameLine);
-  const junk = /^(COPY|ORDER|ADJUSTMENT|SHOPEE|LAZADA|TIKTOK|VISTRA)$/i;
-  const userTok = (line) => { const t = (line.match(/[A-Za-z0-9][A-Za-z0-9._\-]{3,}/g) || []).filter((x) => /[A-Za-z]/.test(x) && !junk.test(x)); return t.length ? t[t.length - 1] : ""; };
+  const userTok = (l) => {
+    const t = l.replace(/[\u0E00-\u0E7F]/g, " ").replace(/[^A-Za-z0-9._\-]+$/, "").trim().split(/\s+/).filter(Boolean);
+    const last = t[t.length - 1] || "";
+    if (t.slice(0, -1).some((x) => x.length > 3) || !/^[A-Za-z0-9._\-]{4,30}$/.test(last) || /^[-.]?[B฿]?\d+$/i.test(last) || /^[-.]/.test(last)) return "";
+    return last.toUpperCase() === orderNo ? "" : last;
+  };
+  const pw = new Set();
+  products.forEach((p) => [p.name, ...String(p.aliases || "").split("\n")].forEach((x) => String(x || "").toUpperCase().split(/[^A-Z0-9]+/).forEach((w) => { if (w) pw.add(w); })));
+  const okTok = (t) => t && /[A-Za-z]/.test(t) && !pw.has(t.toUpperCase());
+  const oi = orderNo ? nl.findIndex((l) => l.toUpperCase().replace(/\s+/g, "").includes(orderNo)) : -1;
   let customer = "";
-  if (ni > 0) for (let k = ni - 1; k >= Math.max(0, ni - 4) && !customer; k--) { if (!bad.test(nl[k])) customer = userTok(nl[k]); }
+  if (oi > 0) {
+    for (let k = oi - 1; k >= Math.max(0, oi - 8) && !customer; k--) {
+      if (bad.test(nl[k])) continue;
+      const t = userTok(nl[k]);
+      if (okTok(t)) customer = t;
+    }
+  }
+  if (!customer) customer = nl.filter((l) => !bad.test(l)).map(userTok).find((t) => okTok(t) && /\d/.test(t)) || "";
   return { gross, net, fee, qty, orderNo, date, orderAt, customer, productId, cands, scanName, platformId: pl ? pl.id : "" };
+}
+function ProductPicker({ products, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const sel = products.find((p) => p.id === value);
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const list = products.filter((p) => { const h = [p.name, p.sku, p.aliases].join(" ").toLowerCase(); return terms.every((t) => h.includes(t)); });
+  const close = () => { setOpen(false); setQ(""); };
+  const ph = (s) => React.createElement("div", { style: { width: s, height: s, aspectRatio: "1", borderRadius: 8, background: "#F1F3F0", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#99A09B" } }, React.createElement(Package, { size: 20 }));
+  const thumb = (p, s) => p && p.image ? React.createElement("img", { src: p.image, alt: "", style: { width: s, height: s, objectFit: "cover", borderRadius: 8, flexShrink: 0 } }) : ph(s);
+  return React.createElement(React.Fragment, null,
+    React.createElement("div", { className: "field" },
+      React.createElement("span", null, "สินค้า"),
+      React.createElement("button", { type: "button", className: "btn btn-outline", style: { justifyContent: "flex-start", gap: 10, textAlign: "left", padding: 8, height: "auto" }, onClick: () => setOpen(true) },
+        thumb(sel, 44),
+        React.createElement("div", { style: { flex: 1, whiteSpace: "normal", wordBreak: "break-word", fontSize: 14, fontWeight: 600, color: sel ? "#1C201D" : "#99A09B" } }, sel ? sel.name : "แตะเพื่อเลือกสินค้า"),
+        React.createElement(ChevronRight, { size: 16 }))),
+    open && React.createElement("div", { className: "modal-overlay", onClick: close }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+      React.createElement("div", { className: "modal-head" }, React.createElement("div", { className: "modal-title" }, "เลือกสินค้า"), React.createElement("button", { type: "button", className: "icon-btn", onClick: close }, React.createElement(X, { size: 18 }))),
+      React.createElement("input", { type: "search", value: q, placeholder: "ค้นหาชื่อ / SKU", onChange: (e) => setQ(e.target.value), style: { width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
+      list.length === 0 ? React.createElement("div", { className: "mini-empty" }, "ไม่พบสินค้า") :
+      React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 10 } }, list.map((p) =>
+        React.createElement("button", { key: p.id, type: "button", onClick: () => { onChange(p.id); close(); }, style: { border: p.id === value ? "2px solid #0F2B26" : "1px solid #E1E5E0", borderRadius: 12, background: "#fff", padding: 6, cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, opacity: p.stock <= 0 ? 0.55 : 1 } },
+          p.image ? React.createElement("img", { src: p.image, alt: "", style: { width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 8 } }) : ph("100%"),
+          React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: "#1C201D", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", textAlign: "center" } }, p.name),
+          React.createElement("div", { style: { fontSize: 11, color: p.stock <= 0 ? "#B42318" : "#68706B" } }, "เหลือ " + p.stock)))))));
 }
 function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales, onLearn }) {
   const todayStr = () => bkkDate(/* @__PURE__ */ new Date());
@@ -595,7 +636,6 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
   const [time, setTime] = useState(initial ? fmtTime(initial.date) : hm(/* @__PURE__ */ new Date()));
   const [scanMsg, setScanMsg] = useState("");
   const [scanInfo, setScanInfo] = useState(null);
-  const [scanRaw, setScanRaw] = useState("");
   async function scan(e) {
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
@@ -606,7 +646,6 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       const worker = await T.createWorker("tha+eng", 1, { logger: (m) => { if (m.status === "recognizing text") setScanMsg("กำลังอ่านรูป… " + Math.round((m.progress || 0) * 100) + "%"); } });
       const { data } = await worker.recognize(f);
       await worker.terminate();
-      setScanRaw(data.text || "");
       const r = parseOrderText(data.text || "", products, platforms);
       if (r.productId) setProductId(r.productId);
       setScanInfo({ name: r.scanName, guess: r.productId, cands: r.cands });
@@ -692,19 +731,13 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
     React.createElement("div", { className: "section-title", style: { marginBottom: 14 } }, initial ? "แก้ไขรายการขาย" : "บันทึกการขาย"),
     !initial && React.createElement("label", { className: "btn btn-outline btn-block", style: { cursor: "pointer", textAlign: "center", marginBottom: 6 } }, "📷 สแกนจากรูปหน้าออเดอร์ (OCR)", React.createElement("input", { type: "file", accept: "image/*", onChange: scan, style: { display: "none" } })),
     scanMsg && React.createElement("div", { style: { fontSize: 12.5, color: scanMsg.startsWith("⚠") ? "#B42318" : "#68706B", marginBottom: 10 } }, scanMsg),
-    scanRaw && React.createElement("details", { style: { marginBottom: 10 } },
-      React.createElement("summary", { style: { fontSize: 12, color: "#68706B", cursor: "pointer" } }, "ดูข้อความที่อ่านได้จากรูป (ไว้ตรวจเมื่ออ่านผิด)"),
-      React.createElement("pre", { style: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 11, background: "#F6F7F5", borderRadius: 8, padding: 8, margin: "6px 0 0", userSelect: "text" } }, scanRaw)),
     scanInfo && scanInfo.cands && scanInfo.cands.length > 0 && (scanInfo.cands.length > 1 || !scanInfo.guess) && React.createElement("div", { style: { marginBottom: 10 } },
       React.createElement("div", { style: { fontSize: 12, color: "#68706B", marginBottom: 4 } }, "สินค้าที่น่าจะใช่ (กดเลือก):"),
       scanInfo.cands.map((c) => { const pr = products.find((x) => x.id === c.id); return React.createElement("button", { key: c.id, type: "button", className: "btn btn-ghost btn-block", style: { display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-start", textAlign: "left", marginBottom: 4, border: c.id === productId ? "2px solid #0F2B26" : "1px solid #E1E5E0" }, onClick: () => setProductId(c.id) }, pr && pr.image ? React.createElement("img", { src: pr.image, alt: "", style: { width: 30, height: 30, objectFit: "cover", borderRadius: 6, flexShrink: 0 } }) : null, React.createElement("span", { style: { whiteSpace: "normal", fontSize: 13 } }, c.name)); })),
     React.createElement("div", { className: "form-grid" },
       ...items.map((it, i) => React.createElement("div", { key: i, style: items.length > 1 ? { border: "1px solid #E1E5E0", borderRadius: 12, padding: 10 } : void 0 },
         items.length > 1 && React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, fontWeight: 700, marginBottom: 6 } }, React.createElement("span", null, "รายการที่ " + (i + 1)), React.createElement("button", { type: "button", className: "icon-btn-sm", "aria-label": "ลบรายการ", onClick: () => setItems(items.filter((_, k) => k !== i)) }, React.createElement(Trash2, { size: 14 }))),
-        React.createElement("label", { className: "field" }, React.createElement("span", null, "สินค้า"),
-          React.createElement("select", { value: it.productId, onChange: (e) => setItem(i, { productId: e.target.value }) },
-            React.createElement("option", { value: "" }, "เลือกสินค้า"),
-            products.map((p) => React.createElement("option", { key: p.id, value: p.id }, p.name, " (คงเหลือ ", p.stock, ")")))),
+        React.createElement(ProductPicker, { products, value: it.productId, onChange: (v) => setItem(i, { productId: v }) }),
         React.createElement("div", { className: "field-row" },
           React.createElement("label", { className: "field" }, React.createElement("span", null, "จำนวน"),
             React.createElement("input", { type: "number", min: "1", value: it.quantity, onChange: (e) => setItem(i, { quantity: e.target.value }) })),
@@ -1213,34 +1246,16 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
-    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 34"));
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 33"));
 }
-const parseNum = (v) => parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, ""));
 function ImportModal({ products, platforms, onClose, onImport }) {
   const [step, setStep] = useState(1);
   const [platformId, setPlatformId] = useState(platforms[0]?.id || "");
   const [rawText, setRawText] = useState("");
-  const [fileMsg, setFileMsg] = useState("");
-  async function pickFile(e) {
-    const f = e.target.files && e.target.files[0];
-    e.target.value = "";
-    if (!f) return;
-    setFileMsg("กำลังอ่านไฟล์…");
-    try {
-      const d = await readReportFile(f);
-      const clean = (v) => String(v ?? "").replace(/[\t\r\n]+/g, " ").trim();
-      const hit = (r) => [/สินค้า|product|item/i, /จำนวน|quantity|qty/i, /ราคา|price|amount/i].filter((re) => r.some((c) => re.test(String(c)))).length;
-      const h2 = d.rows.slice(0, 40).findIndex((r) => hit(r) >= 2);
-      const start = h2 >= 0 ? h2 : d.hi;
-      const lines = d.rows.slice(start).map((r) => r.map(clean)).filter((r) => r.some(Boolean)).map((r) => r.join("\t"));
-      setRawText(lines.join("\n"));
-      setFileMsg("อ่านไฟล์แล้ว " + Math.max(0, lines.length - 1) + " แถว" + (d.sheet ? " (ชีต " + d.sheet + ")" : "") + " กด \"อ่านข้อมูล\" ต่อได้เลย");
-    } catch (err) { setFileMsg("อ่านไฟล์ไม่สำเร็จ (ไฟล์ .xlsx ต้องต่ออินเทอร์เน็ตในครั้งแรก หรือบันทึกเป็น .csv แล้วลองใหม่)"); }
-  }
   const [mapping, setMapping] = useState({ name: 0, quantity: 1, price: 2, coupon: -1, fee: -1, date: -1 });
   const [result, setResult] = useState(null);
   const rows = useMemo(
-    () => { const useTab = rawText.includes("\t"); return rawText.trim().split("\n").filter(Boolean).map((line) => line.split(useTab ? "\t" : ",").map((c) => c.trim())); },
+    () => rawText.trim().split("\n").filter(Boolean).map((line) => line.split(/\t|,/).map((c) => c.trim())),
     [rawText]
   );
   const header = rows[0] || [];
@@ -1289,9 +1304,9 @@ function ImportModal({ products, platforms, onClose, onImport }) {
     const stockDelta = {};
     dataRows.forEach((row) => {
       const name = row[mapping.name];
-      const qty = parseNum(row[mapping.quantity]);
-      const price = parseNum(row[mapping.price]);
-      const coupon = mapping.coupon >= 0 ? parseNum(row[mapping.coupon]) || 0 : 0;
+      const qty = parseFloat(row[mapping.quantity]);
+      const price = parseFloat(row[mapping.price]);
+      const coupon = mapping.coupon >= 0 ? parseFloat(row[mapping.coupon]) || 0 : 0;
       const dateRaw = mapping.date >= 0 ? row[mapping.date] : null;
       if (!name || isNaN(qty) || isNaN(price) || qty <= 0) {
         skipped++;
@@ -1306,7 +1321,7 @@ function ImportModal({ products, platforms, onClose, onImport }) {
       }
       let date = new Date(dateRaw);
       if (isNaN(date.getTime())) date = /* @__PURE__ */ new Date();
-      const fileFee = mapping.fee >= 0 ? parseNum(row[mapping.fee]) : NaN;
+      const fileFee = mapping.fee >= 0 ? parseFloat(row[mapping.fee]) : NaN;
       const fee = !isNaN(fileFee) ? fileFee : price * qty * ((platform?.feePercent || 0) / 100);
       newSales.push({
         id: uid(),
@@ -1326,7 +1341,7 @@ function ImportModal({ products, platforms, onClose, onImport }) {
     setResult({ imported, skipped, notFound });
     setStep(3);
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-head" }, /* @__PURE__ */ React.createElement("div", { className: "modal-title" }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C"), /* @__PURE__ */ React.createElement("button", { className: "icon-btn", onClick: onClose }, /* @__PURE__ */ React.createElement(X, { size: 18 }))), /* @__PURE__ */ React.createElement("div", { className: "step-indicator" }, ["Data", "Mapping", "Result"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: label, className: "step-chip " + (step === i + 1 ? "active" : step > i + 1 ? "done" : "") }, /* @__PURE__ */ React.createElement("span", { className: "step-num" }, String(i + 1).padStart(2, "0")), /* @__PURE__ */ React.createElement("span", null, label)))), step === 1 && /* @__PURE__ */ React.createElement("div", { className: "modal-body" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "Platform \u0E02\u0E2D\u0E07\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E19\u0E35\u0E49"), /* @__PURE__ */ React.createElement("select", { value: platformId, onChange: (e) => setPlatformId(e.target.value) }, platforms.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name)))), /* @__PURE__ */ React.createElement("label", { className: "btn btn-outline btn-block", style: { cursor: "pointer", textAlign: "center", marginBottom: 8 } }, "📂 เลือกไฟล์ Excel (.xlsx) หรือ .csv", React.createElement("input", { type: "file", accept: ".xlsx,.xls,.csv", onChange: pickFile, style: { display: "none" } })), fileMsg && React.createElement("div", { style: { fontSize: 12.5, color: "#68706B", marginBottom: 8 } }, fileMsg), /* @__PURE__ */ React.createElement("div", { className: "paste-area" }, /* @__PURE__ */ React.createElement(FileSpreadsheet, { size: 22, strokeWidth: 1.6 }), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-head" }, /* @__PURE__ */ React.createElement("div", { className: "modal-title" }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C"), /* @__PURE__ */ React.createElement("button", { className: "icon-btn", onClick: onClose }, /* @__PURE__ */ React.createElement(X, { size: 18 }))), /* @__PURE__ */ React.createElement("div", { className: "step-indicator" }, ["Data", "Mapping", "Result"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: label, className: "step-chip " + (step === i + 1 ? "active" : step > i + 1 ? "done" : "") }, /* @__PURE__ */ React.createElement("span", { className: "step-num" }, String(i + 1).padStart(2, "0")), /* @__PURE__ */ React.createElement("span", null, label)))), step === 1 && /* @__PURE__ */ React.createElement("div", { className: "modal-body" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "Platform \u0E02\u0E2D\u0E07\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E19\u0E35\u0E49"), /* @__PURE__ */ React.createElement("select", { value: platformId, onChange: (e) => setPlatformId(e.target.value) }, platforms.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name)))), /* @__PURE__ */ React.createElement("div", { className: "paste-area" }, /* @__PURE__ */ React.createElement(FileSpreadsheet, { size: 22, strokeWidth: 1.6 }), /* @__PURE__ */ React.createElement(
     "textarea",
     {
       placeholder: "\u0E27\u0E32\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 (\u0E04\u0E31\u0E48\u0E19\u0E14\u0E49\u0E27\u0E22 Tab \u0E2B\u0E23\u0E37\u0E2D , )\n\u0E41\u0E16\u0E27\u0E41\u0E23\u0E01\u0E40\u0E1B\u0E47\u0E19\u0E2B\u0E31\u0E27\u0E15\u0E32\u0E23\u0E32\u0E07 \u0E40\u0E0A\u0E48\u0E19:\n\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32,\u0E08\u0E33\u0E19\u0E27\u0E19,\u0E23\u0E32\u0E04\u0E32,\u0E04\u0E39\u0E1B\u0E2D\u0E07,\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21,\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\n\n\u0E16\u0E49\u0E32\u0E44\u0E1F\u0E25\u0E4C\u0E08\u0E32\u0E01\u0E41\u0E1E\u0E25\u0E15\u0E1F\u0E2D\u0E23\u0E4C\u0E21\u0E21\u0E35\u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21\u0E08\u0E23\u0E34\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E41\u0E25\u0E49\u0E27 \u0E23\u0E30\u0E1A\u0E1A\u0E08\u0E30\u0E43\u0E0A\u0E49\u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E19\u0E31\u0E49\u0E19\u0E41\u0E17\u0E19\u0E01\u0E32\u0E23\u0E1B\u0E23\u0E30\u0E21\u0E32\u0E13 %",
@@ -1396,7 +1411,7 @@ function ProductImageField({ value, onChange }) {
         React.createElement("input", { type: "file", accept: "image/*", onChange: pick, style: { display: "none" } })),
       value && React.createElement("button", { type: "button", className: "btn btn-ghost", onClick: () => onChange("") }, "\u0E25\u0E1A")));
 }
-function ProductForm({ initial, onSave, onClose }) {
+function ProductForm({ initial, products, onSave, onClose }) {
   const [name, setName] = useState(initial?.name || "");
   const [image, setImage] = useState(initial?.image || "");
   const [aliases, setAliases] = useState(initial?.aliases || "");
@@ -1405,7 +1420,9 @@ function ProductForm({ initial, onSave, onClose }) {
   const [price, setPrice] = useState(initial?.price ?? "");
   const [stock, setStock] = useState(initial?.stock ?? "");
   const [lowStockThreshold, setLowStockThreshold] = useState(initial?.lowStockThreshold ?? 5);
-  const canSave = name && sku && cost !== "" && price !== "" && stock !== "";
+  const nz = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const dup = (products || []).find((p) => p.id !== initial?.id && (nz(p.name) === nz(name) || (nz(sku) && nz(p.sku) === nz(sku))));
+  const canSave = name && sku && cost !== "" && price !== "" && stock !== "" && !dup;
   function save() {
     if (!canSave) return;
     onSave({
@@ -1427,7 +1444,7 @@ function ProductForm({ initial, onSave, onClose }) {
       value: lowStockThreshold,
       onChange: (e) => setLowStockThreshold(e.target.value)
     }
-  )))), /* @__PURE__ */ React.createElement("div", { className: "modal-actions" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: onClose }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", disabled: !canSave, onClick: save }, "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01")))));
+  )))), dup && React.createElement("div", { style: { color: "#B42318", fontSize: 12.5, marginBottom: 10 } }, "มีสินค้านี้อยู่แล้ว: " + dup.name + " (SKU " + dup.sku + ")"), /* @__PURE__ */ React.createElement("div", { className: "modal-actions" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: onClose }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", disabled: !canSave, onClick: save }, "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01")))));
 }
 function ProductsPage({ products, onSave, onDelete }) {
   const [search, setSearch] = useState("");
@@ -1492,6 +1509,7 @@ function ProductsPage({ products, onSave, onDelete }) {
     ProductForm,
     {
       initial: editing,
+      products,
       onClose: () => setShowForm(false),
       onSave: (p) => {
         onSave(p);
@@ -1607,71 +1625,6 @@ function PlatformFeeReport({ sales, products, platforms }) {
       }))),
     mode !== "custom" && groups.length > limit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: () => setLimit(limit + 14) }, "\u0E41\u0E2A\u0E14\u0E07\u0E40\u0E1E\u0E34\u0E48\u0E21"),
     React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 10 } }, "% = \u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21 \u00F7 \u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22 (\u0E01\u0E48\u0E2D\u0E19\u0E2B\u0E31\u0E01\u0E04\u0E39\u0E1B\u0E2D\u0E07)"));
-}
-function SettingsPanel({ products, sales, platforms, setPlatforms, onRestore }) {
-  const [newName, setNewName] = useState("");
-  const palette = ["#E85D3A", "#1877F2", "#06C755", "#8E44AD", "#16A085", "#D35400"];
-  const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  const used = (id) => sales.some((x) => x.platformId === id);
-  const upd = (id, patch) => setPlatforms(platforms.map((p) => p.id === id ? { ...p, ...patch } : p));
-  function add() {
-    const n = newName.trim();
-    if (!n) return;
-    setPlatforms([...platforms, { id: "pf_" + uid(), name: n, color: palette[platforms.length % palette.length], feePercent: 0 }]);
-    setNewName("");
-  }
-  function download(name, text, type) {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([text], { type }));
-    a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  }
-  function exportJson() { download("mies-backup-" + day + ".json", JSON.stringify({ exportedAt: (/* @__PURE__ */ new Date()).toISOString(), products, sales, platforms }), "application/json"); }
-  function exportCsv() {
-    const q = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
-    const head = ["วันที่", "แพลตฟอร์ม", "สินค้า", "SKU", "จำนวน", "ราคา/ชิ้น", "ยอดขาย", "คูปอง", "ค่าธรรมเนียม", "รายจ่ายอื่นๆ", "ต้นทุน", "กำไร"];
-    const rows = [...sales].sort((a, b) => new Date(a.date) - new Date(b.date)).map((x) => {
-      const p = products.find((t) => t.id === x.productId), pl = platforms.find((t) => t.id === x.platformId);
-      const m = computeSaleMetrics(x, p, pl);
-      return [new Date(x.date).toISOString().slice(0, 10), pl?.name, p?.name, p?.sku, x.quantity, x.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit];
-    });
-    download("mies-sales-" + day + ".csv", "\ufeff" + [head, ...rows].map((r) => r.map(q).join(",")).join("\r\n"), "text/csv;charset=utf-8");
-  }
-  function restore(e) {
-    const f = e.target.files && e.target.files[0];
-    e.target.value = "";
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => {
-      try {
-        const d = JSON.parse(r.result);
-        if (!Array.isArray(d.products) || !Array.isArray(d.sales)) throw new Error("bad");
-        if (window.confirm("แทนที่ข้อมูลปัจจุบันทั้งหมดด้วยไฟล์สำรองนี้?")) onRestore(d);
-      } catch (err) { alert("ไฟล์สำรองไม่ถูกต้อง"); }
-    };
-    r.readAsText(f);
-  }
-  const inp = { padding: 8, borderRadius: 8, border: "1px solid #E1E5E0", fontSize: 14, minWidth: 0 };
-  return React.createElement("div", { className: "page-inner" },
-    React.createElement("div", { className: "card section-card" },
-      React.createElement("div", { className: "section-title", style: { marginBottom: 10 } }, "แพลตฟอร์ม / ค่าธรรมเนียม (%)"),
-      platforms.map((pl) => React.createElement("div", { key: pl.id, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
-        React.createElement("span", { style: { width: 10, height: 10, borderRadius: 5, background: pl.color, flexShrink: 0 } }),
-        React.createElement("input", { style: { ...inp, flex: 1 }, value: pl.name, onChange: (e) => upd(pl.id, { name: e.target.value }) }),
-        React.createElement("input", { style: { ...inp, width: 64 }, type: "number", min: "0", step: "any", inputMode: "decimal", value: pl.feePercent, onChange: (e) => upd(pl.id, { feePercent: e.target.value === "" ? "" : parseFloat(e.target.value) }) }),
-        React.createElement("span", null, "%"),
-        React.createElement("button", { className: "icon-btn-sm", disabled: used(pl.id), title: used(pl.id) ? "มีรายการขายอยู่ ลบไม่ได้" : "ลบ", style: { opacity: used(pl.id) ? 0.3 : 1 }, onClick: () => window.confirm("ลบแพลตฟอร์มนี้?") && setPlatforms(platforms.filter((x) => x.id !== pl.id)) }, React.createElement(Trash2, { size: 14 })))),
-      React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
-        React.createElement("input", { style: { ...inp, flex: 1 }, placeholder: "ชื่อแพลตฟอร์มใหม่", value: newName, onChange: (e) => setNewName(e.target.value) }),
-        React.createElement("button", { className: "btn btn-primary", onClick: add }, "เพิ่ม")),
-      React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "แก้ % มีผลกับรายการขายใหม่เท่านั้น รายการเก่าไม่เปลี่ยน")),
-    React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
-      React.createElement("div", { className: "section-title", style: { marginBottom: 10 } }, "สำรอง / ส่งออกข้อมูล"),
-      React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-        React.createElement("button", { className: "btn btn-outline btn-block", onClick: exportJson }, "ดาวน์โหลดไฟล์สำรอง (.json)"),
-        React.createElement("button", { className: "btn btn-outline btn-block", onClick: exportCsv }, "ส่งออกรายการขาย (.csv เปิดใน Excel)"),
-        React.createElement("label", { className: "btn btn-outline btn-block", style: { cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง (.json)",
-          React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })))));
 }
 function CustomerStats({ sales, products }) {
   const [sort, setSort] = useState("orders");
@@ -1908,10 +1861,6 @@ function App() {
     setSales((prev) => prev.filter((x) => x.id !== id));
     setProducts((prev) => prev.map((p) => p.id === sale.productId ? { ...p, stock: p.stock + (sale.status ? 0 : sale.quantity) } : p));
   }
-  function handleRestore(d) {
-    setProducts(d.products); setSales(d.sales);
-    if (Array.isArray(d.platforms) && d.platforms.length) setPlatforms(d.platforms);
-  }
   function handleImport(newSales, stockDelta) {
     setSales((prev) => [...prev, ...newSales]);
     setProducts(
@@ -1962,7 +1911,7 @@ function App() {
       onExpensesChange: setExpenses,
       onRestore: handleRestore
     }
-  ), activeTab === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ProductsPage, { products, onSave: handleSaveProduct, onDelete: handleDeleteProduct }), /* @__PURE__ */ React.createElement(SettingsPanel, { products, sales, platforms, setPlatforms, onRestore: handleRestore })), activeTab === "recon" && /* @__PURE__ */ React.createElement(ReconPage, { sales, products, platforms, onUpdates: handleOrderUpdates }), activeTab === "analytics" && /* @__PURE__ */ React.createElement(
+  ), activeTab === "products" && /* @__PURE__ */ React.createElement(ProductsPage, { products, onSave: handleSaveProduct, onDelete: handleDeleteProduct }), activeTab === "recon" && /* @__PURE__ */ React.createElement(ReconPage, { sales, products, platforms, onUpdates: handleOrderUpdates }), activeTab === "analytics" && /* @__PURE__ */ React.createElement(
     AnalyticsPage,
     {
       sales,
