@@ -47,7 +47,8 @@ var NAV_ITEMS = [
   { id: "sales", label: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01", icon: Plus },
   { id: "products", label: "\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32", icon: Package },
   { id: "analytics", label: "\u0E27\u0E34\u0E40\u0E04\u0E23\u0E32\u0E30\u0E2B\u0E4C", icon: BarChart2 },
-  { id: "recon", label: "ตรวจเช็ค", icon: Check }
+  { id: "recon", label: "ตรวจเช็ค", icon: Check },
+  { id: "cancel", label: "ยกเลิก", icon: X }
 ];
 var DATE_PRESETS = [
   { id: "today", label: "\u0E27\u0E31\u0E19\u0E19\u0E35\u0E49" },
@@ -109,6 +110,7 @@ function getPreviousRange(start, end) {
   return { start: startOfDay(prevStart), end: endOfDay(prevEnd) };
 }
 function computeSaleMetrics(sale, product, platform) {
+  if (sale.status === "cancelled") return { gross: 0, coupon: 0, fee: 0, otherExpense: 0, netRevenue: 0, cost: 0, profit: 0 };
   if (sale.status === "returned" || sale.status === "lost") {
     const uc = sale.unitCost != null ? sale.unitCost : product?.cost || 0;
     const extra = sale.lossExtra || 0;
@@ -133,7 +135,7 @@ function aggregate(sales, products, platforms) {
   const orderSet = /* @__PURE__ */ new Set();
   for (const s of sales) {
     const m = computeSaleMetrics(s, productMap[s.productId], platformMap[s.platformId]);
-    if (s.status === "returned" || s.status === "lost") { lossCount++; loss -= m.profit; } else orderSet.add(s.orderId || s.id);
+    if (s.status === "returned" || s.status === "lost") { lossCount++; loss -= m.profit; } else if (s.status !== "cancelled") orderSet.add(s.orderId || s.id);
     gross += m.gross;
     coupon += m.coupon;
     fee += m.fee;
@@ -412,7 +414,7 @@ function TopProducts({ sales, products }) {
       if (!p) return;
       const m = computeSaleMetrics(s, p, null);
       if (!byProduct[p.id]) byProduct[p.id] = { product: p, qty: 0, gross: 0, profit: 0 };
-      byProduct[p.id].qty += s.status === "returned" || s.status === "lost" ? 0 : s.quantity;
+      byProduct[p.id].qty += s.status ? 0 : s.quantity;
       byProduct[p.id].gross += m.gross;
       byProduct[p.id].profit += m.profit;
     });
@@ -664,7 +666,8 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
   const custInfo = (() => {
     if (!cn(customer)) return null;
     const mine = (sales || []).filter((x) => cn(x.customer) === cn(customer) && !x.status && !(initial && initial.orderId && x.orderId === initial.orderId) && !(initial && x.id === initial.id));
-    return { n: new Set(mine.map((x) => x.orderId || x.id)).size, total: mine.reduce((a, x) => a + (x.price || 0) * (x.quantity || 0), 0) };
+    const all = (sales || []).filter((x) => cn(x.customer) === cn(customer));
+    return { n: new Set(mine.map((x) => x.orderId || x.id)).size, total: mine.reduce((a, x) => a + (x.price || 0) * (x.quantity || 0), 0), cancelled: new Set(all.filter((x) => x.status === "cancelled").map((x) => x.orderId || x.id)).size, blocked: all.some((x) => x.blocked) };
   })();
   const cost = lines.reduce((a, l) => a + (l.product?.cost || 0) * (parseFloat(l.quantity) || 0), 0);
   const profit = gross - couponNum - fee.baht - other.baht - cost;
@@ -755,6 +758,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       React.createElement("label", { className: "field" }, React.createElement("span", null, "ชื่อ / ID ลูกค้า (ไม่บังคับ)"),
         React.createElement("input", { list: "customer-names", value: customer, placeholder: "เช่น ชื่อผู้ซื้อใน Shopee", onChange: (e) => setCustomer(e.target.value) })),
       custInfo && React.createElement("div", { style: { fontSize: 12.5, color: custInfo.n > 0 ? "#1A7F4B" : "#68706B", fontWeight: 600 } }, custInfo.n > 0 ? "ลูกค้านี้เคยสั่งแล้ว " + custInfo.n + " ครั้ง (ยอดรวม " + fmtCurrency(custInfo.total) + ") ครั้งนี้เป็นครั้งที่ " + (custInfo.n + 1) : "ลูกค้าใหม่ ยังไม่เคยสั่ง"),
+      custInfo && (custInfo.blocked || custInfo.cancelled > 0) && React.createElement("div", { style: { fontSize: 12.5, color: "#B42318", fontWeight: 700 } }, custInfo.blocked ? "🚫 ลูกค้านี้อยู่ในรายชื่อบล็อก" + (custInfo.cancelled ? " (เคยยกเลิก " + custInfo.cancelled + " ครั้ง)" : "") : "⚠ ลูกค้านี้เคยยกเลิกออเดอร์ " + custInfo.cancelled + " ครั้ง"),
       React.createElement("datalist", { id: "customer-names" }, [...new Set((sales || []).map((x) => x.customer).filter(Boolean))].map((n) => React.createElement("option", { key: n, value: n })))),
     React.createElement("div", { className: "live-summary" },
       lines.length > 1 && row("จำนวนรายการในออเดอร์", lines.length + " รายการ"),
@@ -916,6 +920,11 @@ function ReconPage({ sales, products, platforms, onUpdates }) {
   const [payFor, setPayFor] = useState(null);
   const [form, setForm] = useState({ date: "", amount: "" });
   const [showImport, setShowImport] = useState(false);
+  const [days, setDaysRaw] = useState(() => { try { return parseInt(localStorage.getItem("mies_overdue_days"), 10) || 14; } catch (e) { return 14; } });
+  const setDays = (v) => { const n = Math.max(1, parseInt(v, 10) || 14); setDaysRaw(n); try { localStorage.setItem("mies_overdue_days", String(n)); } catch (e) {} };
+  const [payLimit, setPayLimit] = useState(10);
+  const [openDay, setOpenDay] = useState(null);
+  const age = (o) => Math.floor((Date.now() - new Date(o.date).getTime()) / 864e5);
   const orders = useMemo(() => buildOrders(sales), [sales]);
   const pm = Object.fromEntries(products.map((p) => [p.id, p]));
   const plm = Object.fromEntries(platforms.map((p) => [p.id, p]));
@@ -924,7 +933,7 @@ function ReconPage({ sales, products, platforms, onUpdates }) {
     const un = os.filter((o) => !o.paid), pd = os.filter((o) => o.paid);
     return { pl, count: os.length, unCount: un.length, waiting: un.reduce((a, o) => a + o.expected, 0), received: pd.reduce((a, o) => a + o.paidAmount, 0), diff: pd.reduce((a, o) => a + o.diff, 0) };
   }).filter((x) => x.count > 0);
-  const list = orders.filter((o) => (pf === "all" || o.platformId === pf) && (flt === "all" || (flt === "unpaid" && !o.paid) || (flt === "paid" && o.paid) || (flt === "diff" && o.paid && Math.abs(o.diff) > 1)));
+  const list = orders.filter((o) => (pf === "all" || o.platformId === pf) && (flt === "all" || (flt === "overdue" && !o.paid && age(o) >= days) || (flt === "unpaid" && !o.paid) || (flt === "paid" && o.paid) || (flt === "diff" && o.paid && Math.abs(o.diff) > 1)));
   const open = (o) => { setPayFor(o); setForm({ date: o.paid ? o.paidDate : bkkDate(/* @__PURE__ */ new Date()), amount: String(o.paid ? o.paidAmount : o.expected) }); };
   const chip = (id, label) => React.createElement("button", { key: id, className: "toggle" + (flt === id ? " active" : ""), onClick: () => { setFlt(id); setLimit(20); } }, label);
   return React.createElement("div", { className: "page-inner" },
@@ -938,9 +947,43 @@ function ReconPage({ sales, products, platforms, onUpdates }) {
         React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 4 } }, React.createElement("span", null, "รอรับเงิน (" + x.unCount + ")"), React.createElement("span", { style: { fontWeight: 700 } }, fmtCurrency(x.waiting))),
         React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 13 } }, React.createElement("span", null, "รับแล้ว"), React.createElement("span", null, fmtCurrency(x.received))),
         Math.abs(x.diff) > 1 && React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 13, color: x.diff < 0 ? "#B42318" : "#1A7F4B" } }, React.createElement("span", null, "ส่วนต่างจากที่คำนวณ"), React.createElement("span", null, (x.diff > 0 ? "+" : "") + fmtCurrency(x.diff)))))),
+    (() => {
+      const od = orders.filter((o) => !o.paid && age(o) >= days);
+      return React.createElement("div", { className: "card section-card", style: { marginTop: 14, borderLeft: od.length ? "4px solid #B42318" : void 0 } },
+        od.length > 0
+          ? React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: "#B42318" } }, "⚠ ค้างรับเงินเกิน " + days + " วัน: " + od.length + " ออเดอร์ รวม " + fmtCurrency(od.reduce((a, o) => a + o.expected, 0)))
+          : React.createElement("div", { style: { fontSize: 13.5, color: "#1A7F4B", fontWeight: 600 } }, "✓ ไม่มีออเดอร์ค้างรับเงินเกิน " + days + " วัน"),
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "#68706B", flexWrap: "wrap" } },
+          "เตือนเมื่อค้างเกิน",
+          React.createElement("input", { type: "number", min: "1", value: days, onChange: (e) => setDays(e.target.value), style: { width: 56, padding: "4px 6px", borderRadius: 8, border: "1px solid #E1E5E0", font: "inherit" } }),
+          "วัน",
+          od.length > 0 && React.createElement("button", { className: "btn btn-outline", style: { padding: "4px 10px", fontSize: 12, minHeight: 0, marginLeft: "auto" }, onClick: () => { setFlt("overdue"); setPf("all"); setLimit(20); } }, "ดูรายการ")));
+    })(),
+    (() => {
+      const byDate = {};
+      orders.filter((o) => o.paid && (pf === "all" || o.platformId === pf)).forEach((o) => {
+        const g = byDate[o.paidDate] || (byDate[o.paidDate] = { date: o.paidDate, total: 0, byPl: {}, rows: [] });
+        g.total += o.paidAmount; g.byPl[o.platformId] = (g.byPl[o.platformId] || 0) + o.paidAmount; g.rows.push(o);
+      });
+      const pd = Object.values(byDate).sort((a, b) => a.date < b.date ? 1 : -1);
+      return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
+        React.createElement("div", { className: "section-title", style: { marginBottom: 4 } }, "ยอดโอนเข้าแยกตามวันที่"),
+        React.createElement("div", { style: { fontSize: 12, color: "#68706B", marginBottom: 8 } }, "เอาไปเทียบกับยอดที่เข้าบัญชีแต่ละครั้ง (ตามตัวกรองแพลตฟอร์มด้านล่าง)"),
+        pd.length === 0 && React.createElement("div", { className: "mini-empty" }, "ยังไม่มีข้อมูลรับเงิน"),
+        pd.slice(0, payLimit).map((g) => React.createElement("div", { key: g.date, style: { borderTop: "1px solid #EEF0ED", padding: "8px 0" } },
+          React.createElement("button", { type: "button", onClick: () => setOpenDay(openDay === g.date ? null : g.date), style: { width: "100%", display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", padding: 0, font: "inherit", textAlign: "left", cursor: "pointer" } },
+            React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+              React.createElement("div", { style: { fontSize: 14, fontWeight: 700 } }, new Date(g.date + "T00:00:00").toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short", year: "2-digit" })),
+              React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, g.rows.length + " ออเดอร์ · " + Object.entries(g.byPl).map(([id, v]) => ((plm[id] || {}).name || "?") + " " + fmtCurrency(v)).join(" · "))),
+            React.createElement("div", { style: { fontWeight: 800, fontSize: 15 } }, fmtCurrency(g.total))),
+          openDay === g.date && React.createElement("div", { style: { marginTop: 6 } }, g.rows.map((o) => React.createElement("div", { key: o.key, style: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, padding: "2px 0" } },
+            React.createElement("span", { style: { flex: 1, minWidth: 0, wordBreak: "break-word" } }, (o.orderNo ? "#" + o.orderNo + " · " : "") + o.rows.map((x) => (pm[x.productId] || {}).name || "?").join(", ")),
+            React.createElement("span", { style: { fontWeight: 600 } }, fmtCurrency(o.paidAmount)))))) ),
+        pd.length > payLimit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: () => setPayLimit(payLimit + 10) }, "แสดงเพิ่ม"));
+    })(),
     React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
       React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 } },
-        React.createElement("div", { className: "toggle-group" }, chip("unpaid", "รอรับเงิน"), chip("paid", "รับแล้ว"), chip("diff", "ยอดไม่ตรง"), chip("all", "ทั้งหมด")),
+        React.createElement("div", { className: "toggle-group" }, chip("unpaid", "รอรับเงิน"), chip("overdue", "ค้างนาน"), chip("paid", "รับแล้ว"), chip("diff", "ยอดไม่ตรง"), chip("all", "ทั้งหมด")),
         React.createElement("select", { value: pf, onChange: (e) => { setPf(e.target.value); setLimit(20); }, style: { fontSize: 13, padding: "4px 8px", borderRadius: 8 } }, React.createElement("option", { value: "all" }, "ทุกแพลตฟอร์ม"), platforms.map((p) => React.createElement("option", { key: p.id, value: p.id }, p.name)))),
       list.length === 0 && React.createElement("div", { className: "mini-empty" }, "ไม่มีรายการ"),
       list.slice(0, limit).map((o) => {
@@ -950,7 +993,7 @@ function ReconPage({ sales, products, platforms, onUpdates }) {
           React.createElement("span", { style: { width: 9, height: 9, borderRadius: 5, background: pl?.color || "#999", flexShrink: 0 } }),
           React.createElement("div", { style: { flex: 1, minWidth: 0 } },
             React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, whiteSpace: "normal", wordBreak: "break-word" } }, o.orderNo || names),
-            React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, fmtBkkDate(o.date) + " · คาดว่าได้ " + fmtCurrency(o.expected)),
+            React.createElement("div", { style: { fontSize: 12, color: !o.paid && age(o) >= days ? "#B42318" : "#68706B" } }, fmtBkkDate(o.date) + " · คาดว่าได้ " + fmtCurrency(o.expected) + (!o.paid ? " · ค้าง " + age(o) + " วัน" : "")),
             o.paid && React.createElement("div", { style: { fontSize: 12, color: Math.abs(o.diff) > 1 ? "#B42318" : "#1A7F4B" } }, "✓ รับแล้ว " + fmtCurrency(o.paidAmount) + " (" + fmtBkkDate(o.paidDate) + ")" + (Math.abs(o.diff) > 1 ? " ต่าง " + (o.diff > 0 ? "+" : "") + o.diff : ""))),
           React.createElement("button", { className: "btn btn-ghost", style: { padding: "4px 10px", fontSize: 12, minHeight: 0 }, onClick: () => open(o) }, o.paid ? "แก้ไข" : "รับเงิน"));
       }),
@@ -965,6 +1008,83 @@ function ReconPage({ sales, products, platforms, onUpdates }) {
       payFor.paid && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: () => { onUpdates([{ key: payFor.key, paid: null }]); setPayFor(null); } }, "ล้างสถานะรับเงิน"),
       React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: () => setPayFor(null) }, "ยกเลิก")))),
     showImport && React.createElement(ReportImport, { orders, platforms, onUpdates, onClose: () => setShowImport(false) }));
+}
+const CANCEL_REASONS = ["ลูกค้าขอยกเลิก", "ติดต่อลูกค้าไม่ได้", "ที่อยู่ไม่ครบ/ผิด", "สั่งผิด/สั่งซ้ำ", "อื่นๆ"];
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch (e) {
+    try { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); const ok = document.execCommand("copy"); ta.remove(); return ok; } catch (e2) { return false; }
+  }
+}
+function CancelPage({ sales, products, platforms, onCancel, onRestore, onSetBlocked }) {
+  const [q, setQ] = useState("");
+  const [target, setTarget] = useState(null);
+  const [form, setForm] = useState({ reason: CANCEL_REASONS[0], note: "", customer: "", block: false });
+  const [msg, setMsg] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const pm = Object.fromEntries(products.map((p) => [p.id, p]));
+  const plm = Object.fromEntries(platforms.map((p) => [p.id, p]));
+  const cn = (x) => String(x || "").trim().toLowerCase();
+  const normal = useMemo(() => buildOrders(sales), [sales]);
+  const cancelled = useMemo(() => {
+    const m = {};
+    sales.forEach((x) => { if (x.status !== "cancelled") return; const k = x.orderId || x.id; (m[k] || (m[k] = { key: k, rows: [] })).rows.push(x); });
+    return Object.values(m).map((o) => { const r = o.rows[0]; return { ...o, at: r.cancelAt || r.date, orderNo: r.orderNo || "", customer: r.customer || "", reason: r.cancelReason || "", note: r.cancelNote || "", platformId: r.platformId }; }).sort((a, b) => new Date(b.at) - new Date(a.at));
+  }, [sales]);
+  const custs = useMemo(() => {
+    const m = {};
+    cancelled.forEach((o) => { const k = cn(o.customer); if (!k) return; const c = m[k] || (m[k] = { key: k, name: o.customer.trim(), count: 0, last: o.at, reasons: {} }); c.count += 1; if (new Date(o.at) > new Date(c.last)) c.last = o.at; if (o.reason) c.reasons[o.reason] = (c.reasons[o.reason] || 0) + 1; });
+    return Object.values(m).map((c) => ({ ...c, blocked: sales.some((x) => cn(x.customer) === c.key && x.blocked) })).sort((a, b) => b.count - a.count || new Date(b.last) - new Date(a.last));
+  }, [cancelled, sales]);
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = (o) => [o.orderNo, o.rows[0].customer, (plm[o.platformId] || {}).name, o.rows.map((r) => (pm[r.productId] || {}).name).join(" "), bkkDate(o.date), fmtBkkDate(o.date)].join(" ").toLowerCase();
+  const found = (terms.length ? normal.filter((o) => terms.every((t) => hay(o).includes(t))) : normal).slice(0, showAll || terms.length ? 30 : 8);
+  const open = (o) => { setTarget(o); setForm({ reason: CANCEL_REASONS[0], note: "", customer: o.rows[0].customer || "", block: false }); };
+  const pending = custs.filter((c) => !c.blocked);
+  async function copyList(list) { const ok = await copyText(list.map((c) => c.name).join("\n")); setMsg(ok ? "คัดลอกแล้ว " + list.length + " รายชื่อ" : "คัดลอกไม่สำเร็จ"); }
+  return React.createElement("div", { className: "page-inner" },
+    React.createElement(Header, { title: "ยกเลิกออเดอร์", subtitle: "ลูกค้ายกเลิกก่อนจัดส่ง · รวบรวมรายชื่อไว้บล็อก", lowStockCount: 0 }),
+    msg && React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "#0F2B26", marginBottom: 8 } }, msg),
+    React.createElement("div", { className: "card section-card" },
+      React.createElement("div", { className: "section-title", style: { marginBottom: 4 } }, "ยกเลิกออเดอร์"),
+      React.createElement("div", { style: { fontSize: 12, color: "#68706B", marginBottom: 8 } }, "ใช้กับออเดอร์ที่ยังไม่ได้จัดส่ง สต็อกจะถูกคืน และไม่นับเป็นยอดขายหรือขาดทุน (ถ้าส่งไปแล้วถูกตีกลับ ให้ใช้ปุ่ม \"สถานะ\" ในแท็บบันทึกแทน)"),
+      React.createElement("input", { type: "search", value: q, placeholder: "ค้นหา เลขออเดอร์ / ลูกค้า / สินค้า", onChange: (e) => setQ(e.target.value), style: { width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14, marginBottom: 6 } }),
+      found.length === 0 && React.createElement("div", { className: "mini-empty" }, "ไม่พบออเดอร์"),
+      found.map((o) => React.createElement("div", { key: o.key, style: { display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: "1px solid #EEF0ED" } },
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+          React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, wordBreak: "break-word" } }, (o.orderNo ? "#" + o.orderNo + " · " : "") + o.rows.map((r) => (pm[r.productId] || {}).name || "?").join(", ")),
+          React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, ((plm[o.platformId] || {}).name || "") + " · " + fmtBkkDate(o.date) + (o.rows[0].customer ? " · 👤 " + o.rows[0].customer : "") + " · " + fmtCurrency(o.rows.reduce((a, r) => a + (r.price || 0) * (r.quantity || 0), 0)))),
+        React.createElement("button", { className: "btn btn-outline", style: { padding: "4px 10px", fontSize: 12, minHeight: 0, color: "#B42318" }, onClick: () => open(o) }, "ยกเลิก"))),
+      !terms.length && normal.length > 8 && React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 6 }, onClick: () => setShowAll(!showAll) }, showAll ? "แสดงน้อยลง" : "แสดงเพิ่ม")),
+    React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
+      React.createElement("div", { className: "section-title", style: { marginBottom: 4 } }, "รายชื่อลูกค้าที่ยกเลิก (ไว้บล็อก)"),
+      React.createElement("div", { style: { fontSize: 12, color: "#68706B", marginBottom: 8 } }, custs.length + " คน · ยังไม่ได้บล็อก " + pending.length + " คน"),
+      custs.length === 0 && React.createElement("div", { className: "mini-empty" }, "ยังไม่มีลูกค้าที่ยกเลิก (ต้องใส่ชื่อ/ID ลูกค้าตอนยกเลิก)"),
+      custs.length > 0 && React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 } },
+        React.createElement("button", { className: "btn btn-primary", style: { padding: "6px 12px", fontSize: 12.5, minHeight: 0 }, disabled: pending.length === 0, onClick: () => copyList(pending) }, "คัดลอกที่ยังไม่บล็อก (" + pending.length + ")"),
+        React.createElement("button", { className: "btn btn-outline", style: { padding: "6px 12px", fontSize: 12.5, minHeight: 0 }, onClick: () => copyList(custs) }, "คัดลอกทั้งหมด")),
+      custs.map((c) => React.createElement("div", { key: c.key, style: { display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: "1px solid #EEF0ED" } },
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+          React.createElement("div", { style: { fontSize: 14, fontWeight: 700, wordBreak: "break-word" } }, c.name, React.createElement("span", { style: { marginLeft: 6, fontSize: 12, fontWeight: 600, color: "#B42318" } }, "ยกเลิก " + c.count + " ครั้ง")),
+          React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, "ล่าสุด " + fmtBkkDate(c.last) + (Object.keys(c.reasons).length ? " · " + Object.keys(c.reasons).join(", ") : ""))),
+        React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 12.5, flexShrink: 0 } }, React.createElement("input", { type: "checkbox", checked: c.blocked, onChange: (e) => onSetBlocked(c.name, e.target.checked) }), "บล็อกแล้ว")))),
+    React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
+      React.createElement("div", { className: "section-title", style: { marginBottom: 6 } }, "รายการที่ยกเลิก (" + cancelled.length + ")"),
+      cancelled.length === 0 && React.createElement("div", { className: "mini-empty" }, "ยังไม่มี"),
+      cancelled.slice(0, 30).map((o) => React.createElement("div", { key: o.key, style: { display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: "1px solid #EEF0ED" } },
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+          React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, wordBreak: "break-word" } }, (o.orderNo ? "#" + o.orderNo + " · " : "") + o.rows.map((r) => (pm[r.productId] || {}).name || "?").join(", ")),
+          React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, "ยกเลิก " + fmtBkkDate(o.at) + (o.customer ? " · 👤 " + o.customer : "") + (o.reason ? " · " + o.reason : "") + (o.note ? " (" + o.note + ")" : ""))),
+        React.createElement("button", { className: "btn btn-ghost", style: { padding: "4px 10px", fontSize: 12, minHeight: 0 }, onClick: () => { if (window.confirm("กู้คืนออเดอร์นี้กลับเป็นปกติ? สต็อกจะถูกหักอีกครั้ง")) { onRestore(o.key); setMsg("กู้คืนออเดอร์แล้ว"); } } }, "กู้คืน")))),
+    target && React.createElement("div", { className: "modal-overlay", onClick: () => setTarget(null) }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body" },
+      React.createElement("div", { className: "section-title", style: { marginBottom: 6 } }, "ยกเลิกออเดอร์"),
+      React.createElement("div", { style: { fontSize: 12.5, color: "#68706B", marginBottom: 10, wordBreak: "break-word" } }, (target.orderNo ? "#" + target.orderNo + " · " : "") + target.rows.map((r) => (pm[r.productId] || {}).name || "?").join(", ")),
+      React.createElement("div", { className: "form-grid" },
+        React.createElement("label", { className: "field" }, React.createElement("span", null, "เหตุผล"), React.createElement("select", { value: form.reason, onChange: (e) => setForm({ ...form, reason: e.target.value }) }, CANCEL_REASONS.map((r) => React.createElement("option", { key: r, value: r }, r)))),
+        React.createElement("label", { className: "field" }, React.createElement("span", null, "หมายเหตุ (ไม่บังคับ)"), React.createElement("input", { value: form.note, onChange: (e) => setForm({ ...form, note: e.target.value }) })),
+        React.createElement("label", { className: "field" }, React.createElement("span", null, "ชื่อ / ID ลูกค้า (ใส่เพื่อเก็บรายชื่อบล็อก)"), React.createElement("input", { value: form.customer, onChange: (e) => setForm({ ...form, customer: e.target.value }) })),
+        React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 14, opacity: form.customer.trim() ? 1 : 0.5 } }, React.createElement("input", { type: "checkbox", disabled: !form.customer.trim(), checked: form.block && !!form.customer.trim(), onChange: (e) => setForm({ ...form, block: e.target.checked }) }), "ทำเครื่องหมาย \"บล็อกลูกค้านี้\"")),
+      React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 12, background: "#B42318" }, onClick: () => { onCancel(target.key, form); setMsg("ยกเลิกออเดอร์แล้ว สต็อกถูกคืน" + (form.block && form.customer.trim() ? " · เพิ่มในรายชื่อบล็อกแล้ว" : "")); setTarget(null); } }, "ยืนยันยกเลิกออเดอร์"),
+      React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: () => setTarget(null) }, "ปิด")))));
 }
 function StatusModal({ sale, productName, onClose, onSave }) {
   const [status, setStatus] = useState(sale.status || "ok");
@@ -1026,8 +1146,8 @@ function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }
           React.createElement("div", { className: "tx-name", style: { whiteSpace: "normal", wordBreak: "break-word" } }, p?.name || "สินค้าไม่พบ"),
           React.createElement("div", { className: "tx-sub" }, pl?.name, " · ", fmtBkkDate(s.date), fmtTime(s.date) ? " " + fmtTime(s.date) : "", " · x", s.quantity, s.orderNo ? " · #" + s.orderNo : "", s.customer ? " · 👤 " + s.customer : "", s.orderAt ? " · สั่ง " + fmtBkkDate(s.orderAt) + " " + hm(s.orderAt) : "", sizes[s.orderId] > 1 ? " · ออเดอร์ " + sizes[s.orderId] + " รายการ" : "")),
         React.createElement("div", { className: "tx-figures" },
-          React.createElement("div", { className: "tx-gross", style: s.status ? { color: "#B42318", fontSize: 12 } : void 0 }, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : fmtCurrency(m.gross)),
-          React.createElement("div", { className: "tx-profit", style: s.status ? { color: "#B42318" } : void 0 }, s.status ? "ขาดทุน " : "กำไร ", s.status ? fmtCurrency(-m.profit) : fmtCurrency(m.profit))),
+          React.createElement("div", { className: "tx-gross", style: s.status ? { color: s.status === "cancelled" ? "#68706B" : "#B42318", fontSize: 12 } : void 0 }, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : s.status === "cancelled" ? "ยกเลิก" : fmtCurrency(m.gross)),
+          React.createElement("div", { className: "tx-profit", style: s.status ? { color: s.status === "cancelled" ? "#68706B" : "#B42318" } : void 0 }, s.status === "cancelled" ? s.cancelReason || "" : s.status ? "ขาดทุน " : "กำไร ", s.status === "cancelled" ? "" : s.status ? fmtCurrency(-m.profit) : fmtCurrency(m.profit))),
         React.createElement("button", { className: "btn btn-ghost", "aria-label": "สถานะ", style: { marginRight: 6, padding: "2px 8px", fontSize: 12, minHeight: 0 }, onClick: () => setStatusFor(s) }, "สถานะ"), !s.status && React.createElement("button", { className: "icon-btn-sm", "aria-label": "แก้ไข", style: { marginRight: 6 }, onClick: () => setEditing(s) }, React.createElement(Edit2, { size: 14 })), React.createElement("button", { className: "icon-btn-sm", "aria-label": "ลบรายการ", onClick: () => {
           const grp = s.orderId && sizes[s.orderId] > 1 ? sales.filter((x) => x.orderId === s.orderId) : null;
           if (grp && window.confirm("ออเดอร์นี้มี " + grp.length + " รายการ\nตกลง = ลบทั้งออเดอร์\nยกเลิก = เลือกลบเฉพาะรายการนี้")) { grp.forEach((x) => onDelete(x.id)); return; }
@@ -1187,7 +1307,7 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     const head = ["วันที่", "สินค้า", "SKU", "แพลตฟอร์ม", "จำนวน", "ราคา/ชิ้น", "ยอดขาย", "คูปอง", "ค่าธรรมเนียม", "รายจ่ายอื่นๆ", "ต้นทุน", "กำไร", "สถานะ", "เวลา", "ลูกค้า", "เลขออเดอร์", "สั่งซื้อตามแพลตฟอร์ม"];
     const rows = [...sales].sort((a, b) => new Date(a.date) - new Date(b.date)).map((s) => {
       const m = computeSaleMetrics(s, pm[s.productId], plm[s.platformId]);
-      return [ymd(s.date), pm[s.productId]?.name || "", pm[s.productId]?.sku || "", plm[s.platformId]?.name || "", s.quantity, s.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : "ปกติ", fmtTime(s.date), s.customer || "", s.orderNo || "", s.orderAt ? bkkDate(s.orderAt) + " " + hm(s.orderAt) : ""];
+      return [ymd(s.date), pm[s.productId]?.name || "", pm[s.productId]?.sku || "", plm[s.platformId]?.name || "", s.quantity, s.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : s.status === "cancelled" ? "ยกเลิก" : "ปกติ", fmtTime(s.date), s.customer || "", s.orderNo || "", s.orderAt ? bkkDate(s.orderAt) + " " + hm(s.orderAt) : ""];
     });
     return [head, ...rows];
   };
@@ -1237,7 +1357,7 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
-    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 35"));
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 37"));
 }
 const parseNum = (v) => parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, ""));
 function ImportModal({ products, platforms, onClose, onImport }) {
@@ -1544,7 +1664,7 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
       if (!p) return;
       const m = computeSaleMetrics(s, p, platforms.find((pl) => pl.id === s.platformId));
       if (!byProduct[p.id]) byProduct[p.id] = { product: p, qty: 0, gross: 0, profit: 0 };
-      byProduct[p.id].qty += s.status === "returned" || s.status === "lost" ? 0 : s.quantity;
+      byProduct[p.id].qty += s.status ? 0 : s.quantity;
       byProduct[p.id].gross += m.gross;
       byProduct[p.id].profit += m.profit;
     });
@@ -1586,6 +1706,7 @@ function PlatformFeeReport({ sales, products, platforms }) {
   const groups = useMemo(() => {
     const map = {};
     sales.forEach((sl) => {
+      if (sl.status) return;
       const day = ymd(sl.date);
       if (mode === "custom" && (day < from || day > to)) return;
       const key = mode === "day" ? day : mode === "month" ? day.slice(0, 7) : "range";
@@ -1892,7 +2013,7 @@ function App() {
     setSales((prev) => prev.map((x) => {
       if (x.id !== id) return x;
       const n = { ...x, ...patch };
-      if (!patch.status) { delete n.status; delete n.restocked; delete n.lossExtra; delete n.compensation; }
+      if (!patch.status) { delete n.status; delete n.restocked; delete n.lossExtra; delete n.compensation; delete n.cancelReason; delete n.cancelNote; delete n.cancelAt; }
       return n;
     }));
     if (nowBack !== wasBack) setProducts((prev) => prev.map((p) => p.id === old.productId ? { ...p, stock: p.stock + nowBack - wasBack } : p));
@@ -1925,6 +2046,23 @@ function App() {
       Object.values(groups).forEach((rows) => rows.forEach((x) => { byId[x.id] = x; }));
       return prev.map((x) => byId[x.id] || x);
     });
+  }
+  function handleCancelOrder(key, info) {
+    sales.filter((x) => (x.orderId || x.id) === key && !x.status).forEach((r) => handleSetStatus(r.id, { status: "cancelled", restocked: true, cancelReason: info.reason, cancelNote: info.note || void 0, cancelAt: (/* @__PURE__ */ new Date()).toISOString() }));
+    const ck = String(info.customer || "").trim().toLowerCase();
+    if (ck) setSales((prev) => prev.map((x) => {
+      let n = x;
+      if ((x.orderId || x.id) === key) n = { ...n, customer: String(info.customer).trim() };
+      if (info.block && String(n.customer || "").trim().toLowerCase() === ck) n = { ...n, blocked: true };
+      return n;
+    }));
+  }
+  function handleRestoreCancelled(key) {
+    sales.filter((x) => (x.orderId || x.id) === key && x.status === "cancelled").forEach((r) => handleSetStatus(r.id, { status: void 0, restocked: false }));
+  }
+  function handleSetBlocked(name, on) {
+    const ck = String(name).trim().toLowerCase();
+    setSales((prev) => prev.map((x) => String(x.customer || "").trim().toLowerCase() === ck ? { ...x, blocked: on ? true : void 0 } : x));
   }
   function handleDeleteSale(id) {
     const sale = sales.find((x) => x.id === id);
@@ -1986,7 +2124,7 @@ function App() {
       onExpensesChange: setExpenses,
       onRestore: handleRestore
     }
-  ), activeTab === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ProductsPage, { products, onSave: handleSaveProduct, onDelete: handleDeleteProduct }), /* @__PURE__ */ React.createElement(SettingsPanel, { products, sales, platforms, setPlatforms, onRestore: handleRestore })), activeTab === "recon" && /* @__PURE__ */ React.createElement(ReconPage, { sales, products, platforms, onUpdates: handleOrderUpdates }), activeTab === "analytics" && /* @__PURE__ */ React.createElement(
+  ), activeTab === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(ProductsPage, { products, onSave: handleSaveProduct, onDelete: handleDeleteProduct }), /* @__PURE__ */ React.createElement(SettingsPanel, { products, sales, platforms, setPlatforms, onRestore: handleRestore })), activeTab === "cancel" && /* @__PURE__ */ React.createElement(CancelPage, { sales, products, platforms, onCancel: handleCancelOrder, onRestore: handleRestoreCancelled, onSetBlocked: handleSetBlocked }), activeTab === "recon" && /* @__PURE__ */ React.createElement(ReconPage, { sales, products, platforms, onUpdates: handleOrderUpdates }), activeTab === "analytics" && /* @__PURE__ */ React.createElement(
     AnalyticsPage,
     {
       sales,
