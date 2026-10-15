@@ -131,11 +131,12 @@ function computeSaleMetrics(sale, product, platform) {
 function aggregate(sales, products, platforms) {
   const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
   const platformMap = Object.fromEntries(platforms.map((p) => [p.id, p]));
-  let gross = 0, coupon = 0, fee = 0, netRevenue = 0, cost = 0, profit = 0, orders = 0, loss = 0, lossCount = 0;
+  let gross = 0, coupon = 0, fee = 0, netRevenue = 0, cost = 0, profit = 0, orders = 0, loss = 0, lossCount = 0, units = 0;
   const orderSet = /* @__PURE__ */ new Set();
   for (const s of sales) {
     const m = computeSaleMetrics(s, productMap[s.productId], platformMap[s.platformId]);
     if (s.status === "returned" || s.status === "lost") { lossCount++; loss -= m.profit; } else if (s.status !== "cancelled") orderSet.add(s.orderId || s.id);
+    if (!s.status) units += s.quantity || 0;
     gross += m.gross;
     coupon += m.coupon;
     fee += m.fee;
@@ -144,7 +145,7 @@ function aggregate(sales, products, platforms) {
     profit += m.profit;
   }
   const margin = gross > 0 ? profit / gross * 100 : 0;
-  return { gross, coupon, fee, netRevenue, cost, profit, orders: orderSet.size, margin, loss, lossCount };
+  return { gross, coupon, fee, netRevenue, cost, profit, orders: orderSet.size, margin, loss, lossCount, units };
 }
 function expenseForRange(expenses, start, end) {
   let total = 0;
@@ -392,13 +393,13 @@ function PlatformPerformance({ sales, products, platforms }) {
     const totals = platforms.map((pl) => {
       const plSales = sales.filter((s) => s.platformId === pl.id);
       const agg = aggregate(plSales, products, platforms);
-      return { ...pl, gross: agg.gross, profit: agg.profit };
+      return { ...pl, gross: agg.gross, profit: agg.profit, units: agg.units, orders: agg.orders };
     });
     const grandGross = totals.reduce((a, b) => a + b.gross, 0);
     return totals.filter((t) => t.gross > 0).map((t) => ({ ...t, share: grandGross > 0 ? t.gross / grandGross * 100 : 0 })).sort((a, b) => b.gross - a.gross);
   }, [sales, products, platforms]);
   const medals = ["\u{1F947}", "\u{1F948}", "\u{1F949}"];
-  return /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-head" }, /* @__PURE__ */ React.createElement("div", { className: "section-title" }, "\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22\u0E15\u0E32\u0E21\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E32\u0E07")), rows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22") : /* @__PURE__ */ React.createElement("div", { className: "platform-list" }, rows.map((r, i) => /* @__PURE__ */ React.createElement("div", { className: "platform-row", key: r.id }, /* @__PURE__ */ React.createElement("div", { className: "platform-rank" }, i < 3 ? medals[i] : i + 1), /* @__PURE__ */ React.createElement("span", { className: "platform-dot", style: { background: r.color } }), /* @__PURE__ */ React.createElement("div", { className: "platform-info" }, /* @__PURE__ */ React.createElement("div", { className: "platform-name" }, r.name), /* @__PURE__ */ React.createElement("div", { className: "platform-bar-track" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-head" }, /* @__PURE__ */ React.createElement("div", { className: "section-title" }, "\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22\u0E15\u0E32\u0E21\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E32\u0E07")), rows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22") : /* @__PURE__ */ React.createElement("div", { className: "platform-list" }, rows.map((r, i) => /* @__PURE__ */ React.createElement("div", { className: "platform-row", key: r.id }, /* @__PURE__ */ React.createElement("div", { className: "platform-rank" }, i < 3 ? medals[i] : i + 1), /* @__PURE__ */ React.createElement("span", { className: "platform-dot", style: { background: r.color } }), /* @__PURE__ */ React.createElement("div", { className: "platform-info" }, /* @__PURE__ */ React.createElement("div", { className: "platform-name" }, r.name, /* @__PURE__ */ React.createElement("span", { style: { marginLeft: 8, fontSize: 11.5, fontWeight: 400, color: "#68706B" } }, r.units + " ชิ้น · " + r.orders + " ออเดอร์")), /* @__PURE__ */ React.createElement("div", { className: "platform-bar-track" }, /* @__PURE__ */ React.createElement(
     "div",
     {
       className: "platform-bar-fill",
@@ -502,30 +503,34 @@ const bkkDate = (d) => { const o = bkkParts(d); return o.year + "-" + o.month + 
 const hm = (d) => { const o = bkkParts(d); return o.hour + ":" + o.minute; };
 const fmtBkkDate = (d) => new Date(d).toLocaleDateString("th-TH", { day: "numeric", month: "short", timeZone: BKK });
 function fmtTime(iso) { return !iso || String(iso).endsWith("T00:00:00.000Z") ? "" : hm(new Date(iso)); }
-async function cropBuyerStrip(file, lines, scanName) {
+async function buyerStrips(file, lines) {
   const bmp = await createImageBitmap(file);
-  const W = bmp.width;
-  const nz = (x) => String(x || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const key = nz(scanName).slice(0, 10);
+  const W = bmp.width, H = bmp.height;
   const L = (lines || []).filter((l) => l && l.bbox);
-  const title = key ? L.find((l) => nz(l.text).includes(key)) : null;
-  if (!title) return null;
-  const h = Math.max(20, title.bbox.y1 - title.bbox.y0);
-  const above = L.filter((l) => l.bbox.y1 <= title.bbox.y0 + 2 && title.bbox.y0 - l.bbox.y1 < Math.max(4 * h, 0.2 * W) && !/ค่า|ยอด|ชำระ|เก็บเงิน|Order|Adjustment/i.test(l.text)).sort((a, b) => b.bbox.y1 - a.bbox.y1)[0];
-  let top, bottom;
-  if (above) { top = above.bbox.y0 - 10; bottom = above.bbox.y1 + 10; }
-  else { const c = (title.bbox.y0 + title.bbox.y1) / 2 - 0.133 * W; top = c - 0.045 * W; bottom = c + 0.045 * W; }
-  top = Math.max(0, top); bottom = Math.min(bmp.height, bottom);
-  if (bottom - top < 12) return null;
-  const left = 0.105 * W, right = 0.9 * W;
-  const sc = Math.max(2, 100 / (bottom - top));
-  const cv = document.createElement("canvas");
-  cv.width = Math.round((right - left) * sc); cv.height = Math.round((bottom - top) * sc);
-  const ctx = cv.getContext("2d");
-  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
-  ctx.filter = "grayscale(1) contrast(1.5)";
-  ctx.drawImage(bmp, left, top, right - left, bottom - top, 0, 0, cv.width, cv.height);
-  return cv;
+  const bad = /ค่า|ยอด|ชำระ|เก็บเงิน|Order|Adjustment|ผู้ซื้อ|COPY/i;
+  const title = L.find((l) => String(l.text).trim().length >= 8 && !bad.test(l.text) && (String(l.text).match(/[A-Za-z]{3,}/g) || []).length >= 2);
+  const anchor = L.find((l) => /หมายเลขคำสั่งซื้อ|เลขคำสั่งซื้อ|Order\s*(ID|No)/i.test(l.text));
+  const out = [];
+  const make = (cy, halfH, label) => {
+    const top = Math.max(0, cy - halfH), bottom = Math.min(H, cy + halfH);
+    if (bottom - top < 12) return;
+    const left = 0.105 * W, right = 0.9 * W, sc = Math.max(2, 100 / (bottom - top));
+    const cv = document.createElement("canvas");
+    cv.width = Math.round((right - left) * sc); cv.height = Math.round((bottom - top) * sc);
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.filter = "grayscale(1) contrast(1.5)";
+    ctx.drawImage(bmp, left, top, right - left, bottom - top, 0, 0, cv.width, cv.height);
+    out.push({ cv, label: label + " y" + Math.round(top) + "-" + Math.round(bottom) });
+  };
+  if (title) {
+    const h = Math.max(20, title.bbox.y1 - title.bbox.y0);
+    const above = L.filter((l) => l !== title && l.bbox.y1 <= title.bbox.y0 + 2 && title.bbox.y0 - l.bbox.y1 < Math.max(4 * h, 0.2 * W) && !bad.test(l.text)).sort((a, b) => b.bbox.y1 - a.bbox.y1)[0];
+    if (above) make((above.bbox.y0 + above.bbox.y1) / 2, (above.bbox.y1 - above.bbox.y0) / 2 + 12, "line");
+    make((title.bbox.y0 + title.bbox.y1) / 2 - 0.133 * W, 0.045 * W, "geo-title");
+  }
+  if (anchor) make((anchor.bbox.y0 + anchor.bbox.y1) / 2 - 0.381 * W, 0.05 * W, "geo-order");
+  return { strips: out, info: "lines=" + L.length + " title=" + (title ? "yes" : "no") + " order-anchor=" + (anchor ? "yes" : "no") + " size=" + W + "x" + H };
 }
 async function readBuyerName(T, canvas) {
   const w = await T.createWorker("eng", 1, {});
@@ -660,6 +665,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
   const [scanMsg, setScanMsg] = useState("");
   const [scanInfo, setScanInfo] = useState(null);
   const [scanRaw, setScanRaw] = useState("");
+  const [scanImg, setScanImg] = useState("");
   async function scan(e) {
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
@@ -684,15 +690,19 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       const miss = [!r.productId && "สินค้า", r.gross == null && "ราคา", r.fee == null && "ค่าธรรมเนียม", !r.platformId && "Platform"].filter(Boolean);
       const dup = r.orderNo && (sales || []).some((x) => x.orderNo === r.orderNo);
       let buyer = r.customer;
+      const dbg = [];
       try {
-        const cv = await cropBuyerStrip(f, data.lines, r.scanName);
-        if (cv) {
+        const { strips, info } = await buyerStrips(f, data.lines);
+        dbg.push(info);
+        if (strips.length) setScanImg(strips[0].cv.toDataURL("image/jpeg", 0.7));
+        for (const st of strips) {
           setScanMsg("กำลังอ่านชื่อผู้ซื้อ…");
-          const b2 = await readBuyerName(T, cv);
-          setScanRaw((data.text || "") + "\n--- แถบชื่อผู้ซื้อ (อ่านรอบสอง) ---\n" + b2.text);
-          if (b2.name) buyer = b2.name;
+          const b2 = await readBuyerName(T, st.cv);
+          dbg.push(st.label + " -> " + JSON.stringify(b2.text.trim()));
+          if (b2.name) { buyer = b2.name; break; }
         }
-      } catch (err2) { /* ใช้ชื่อจากการอ่านรอบแรก */ }
+      } catch (err2) { dbg.push("error: " + (err2 && err2.message ? err2.message : err2)); }
+      setScanRaw((data.text || "") + "\n--- debug ชื่อผู้ซื้อ ---\n" + dbg.join("\n"));
       if (buyer && !customer.trim()) setCustomer(buyer);
       setScanMsg((dup ? "⚠ ออเดอร์นี้เคยบันทึกแล้ว! " : "") + "อ่านรูปเสร็จ กรุณาตรวจค่าให้ถูกต้องก่อนบันทึก" + (buyer ? " · ชื่อลูกค้า: " + buyer : " · อ่านชื่อลูกค้าไม่ได้ กรอกเอง") + (miss.length ? " (อ่านไม่ได้: " + miss.join(", ") + ")" : "") + (!r.productId && r.scanName ? " — เลือกสินค้าเอง ระบบจะจำชื่อ \"" + r.scanName + "\" ไว้ให้ครั้งต่อไป" : ""));
     } catch (err) { setScanMsg("อ่านรูปไม่สำเร็จ (ต้องต่ออินเทอร์เน็ตในครั้งแรก) กรอกเองได้เลย"); }
@@ -769,7 +779,8 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
     scanMsg && React.createElement("div", { style: { fontSize: 12.5, color: scanMsg.startsWith("⚠") ? "#B42318" : "#68706B", marginBottom: 10 } }, scanMsg),
     scanRaw && React.createElement("details", { style: { marginBottom: 10 } },
       React.createElement("summary", { style: { fontSize: 12, color: "#68706B", cursor: "pointer" } }, "ดูข้อความที่อ่านได้จากรูป (ไว้ตรวจเมื่ออ่านผิด)"),
-      React.createElement("pre", { style: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 11, background: "#F6F7F5", borderRadius: 8, padding: 8, margin: "6px 0 0", userSelect: "text" } }, scanRaw)),
+      React.createElement("pre", { style: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 11, background: "#F6F7F5", borderRadius: 8, padding: 8, margin: "6px 0 0", userSelect: "text" } }, scanRaw),
+      scanImg && React.createElement("div", { style: { fontSize: 11, color: "#68706B", marginTop: 6 } }, "ภาพแถบชื่อที่ตัดไปอ่าน:", React.createElement("img", { src: scanImg, alt: "", style: { display: "block", maxWidth: "100%", marginTop: 4, border: "1px solid #E1E5E0" } }))),
     scanInfo && scanInfo.cands && scanInfo.cands.length > 0 && (scanInfo.cands.length > 1 || !scanInfo.guess) && React.createElement("div", { style: { marginBottom: 10 } },
       React.createElement("div", { style: { fontSize: 12, color: "#68706B", marginBottom: 4 } }, "สินค้าที่น่าจะใช่ (กดเลือก):"),
       scanInfo.cands.map((c) => { const pr = products.find((x) => x.id === c.id); return React.createElement("button", { key: c.id, type: "button", className: "btn btn-ghost btn-block", style: { display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-start", textAlign: "left", marginBottom: 4, border: c.id === productId ? "2px solid #0F2B26" : "1px solid #E1E5E0" }, onClick: () => setProductId(c.id) }, pr && pr.image ? React.createElement("img", { src: pr.image, alt: "", style: { width: 30, height: 30, objectFit: "cover", borderRadius: 6, flexShrink: 0 } }) : null, React.createElement("span", { style: { whiteSpace: "normal", fontSize: 13 } }, c.name)); })),
@@ -1402,7 +1413,7 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
-    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 38"));
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 40"));
 }
 const parseNum = (v) => parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, ""));
 function ImportModal({ products, platforms, onClose, onImport }) {
@@ -1726,7 +1737,7 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
       customRange,
       setCustomRange: (c) => setDateState({ ...dateState, customRange: c })
     }
-  ), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E2A\u0E23\u0E38\u0E1B\u0E01\u0E32\u0E23\u0E40\u0E07\u0E34\u0E19"), /* @__PURE__ */ React.createElement("div", { className: "finance-breakdown" }, /* @__PURE__ */ React.createElement("div", { className: "fb-row" }, /* @__PURE__ */ React.createElement("span", null, "Gross Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.gross))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Coupon"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.coupon))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Platform Fee"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.fee))), /* @__PURE__ */ React.createElement("div", { className: "fb-row strong" }, /* @__PURE__ */ React.createElement("span", null, "Net Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.netRevenue))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Cost"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.cost))), /* @__PURE__ */ React.createElement("div", { className: "fb-row profit" }, /* @__PURE__ */ React.createElement("span", null, "Net Profit"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.profit))))), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E40\u0E1B\u0E23\u0E35\u0E22\u0E1A\u0E40\u0E17\u0E35\u0E22\u0E1A\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E32\u0E07"), platformRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "analysis-table-wrap" }, /* @__PURE__ */ React.createElement("table", { className: "analysis-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Platform"), /* @__PURE__ */ React.createElement("th", null, "\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("th", null, "\u0E01\u0E33\u0E44\u0E23"), /* @__PURE__ */ React.createElement("th", null, "Margin"))), /* @__PURE__ */ React.createElement("tbody", null, platformRows.map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "table-dot", style: { background: r.color } }), r.name), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.gross)), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.profit)), /* @__PURE__ */ React.createElement("td", null, r.margin.toFixed(1), "%"))))))), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "Margin Analysis \u0E15\u0E48\u0E2D\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), productRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "margin-list" }, [...productRows].map((r) => ({ ...r, _m: r.gross > 0 ? r.profit / r.gross * 100 : -999 })).sort((a, b) => b._m - a._m).map((r) => {
+  ), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E2A\u0E23\u0E38\u0E1B\u0E01\u0E32\u0E23\u0E40\u0E07\u0E34\u0E19"), /* @__PURE__ */ React.createElement("div", { className: "finance-breakdown" }, /* @__PURE__ */ React.createElement("div", { className: "fb-row" }, /* @__PURE__ */ React.createElement("span", null, "Gross Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.gross))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Coupon"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.coupon))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Platform Fee"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.fee))), /* @__PURE__ */ React.createElement("div", { className: "fb-row strong" }, /* @__PURE__ */ React.createElement("span", null, "Net Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.netRevenue))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Cost"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.cost))), /* @__PURE__ */ React.createElement("div", { className: "fb-row profit" }, /* @__PURE__ */ React.createElement("span", null, "Net Profit"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.profit))))), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E40\u0E1B\u0E23\u0E35\u0E22\u0E1A\u0E40\u0E17\u0E35\u0E22\u0E1A\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E32\u0E07"), platformRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "analysis-table-wrap" }, /* @__PURE__ */ React.createElement("table", { className: "analysis-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Platform"), /* @__PURE__ */ React.createElement("th", null, "ชิ้น"), /* @__PURE__ */ React.createElement("th", null, "\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("th", null, "\u0E01\u0E33\u0E44\u0E23"), /* @__PURE__ */ React.createElement("th", null, "Margin"))), /* @__PURE__ */ React.createElement("tbody", null, platformRows.map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "table-dot", style: { background: r.color } }), r.name, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "#68706B", fontWeight: 400 } }, r.orders + " ออเดอร์")), /* @__PURE__ */ React.createElement("td", { style: { fontWeight: 700 } }, r.units), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.gross)), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.profit)), /* @__PURE__ */ React.createElement("td", null, r.margin.toFixed(1), "%"))))))), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "Margin Analysis \u0E15\u0E48\u0E2D\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), productRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "margin-list" }, [...productRows].map((r) => ({ ...r, _m: r.gross > 0 ? r.profit / r.gross * 100 : -999 })).sort((a, b) => b._m - a._m).map((r) => {
     const margin = r.gross > 0 ? r.profit / r.gross * 100 : 0;
     return /* @__PURE__ */ React.createElement("div", { className: "margin-row", key: r.product.id }, /* @__PURE__ */ React.createElement("div", { className: "margin-name" }, r.product.name, React.createElement("div", { style: { fontSize: 11.5, fontWeight: 400, color: "#68706B" } }, "ยอดขาย " + fmtCurrency(r.gross) + " · กำไร " + fmtCurrency(r.profit))), /* @__PURE__ */ React.createElement("div", { className: "margin-bar-track" }, /* @__PURE__ */ React.createElement(
       "div",
