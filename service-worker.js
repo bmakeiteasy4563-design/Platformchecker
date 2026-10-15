@@ -1,4 +1,4 @@
-const CACHE_NAME = "mies-dashboard-v38";
+const CACHE_NAME = "mies-dashboard-v39";
 
 const APP_SHELL = [
   "./",

@@ -502,6 +502,41 @@ const bkkDate = (d) => { const o = bkkParts(d); return o.year + "-" + o.month + 
 const hm = (d) => { const o = bkkParts(d); return o.hour + ":" + o.minute; };
 const fmtBkkDate = (d) => new Date(d).toLocaleDateString("th-TH", { day: "numeric", month: "short", timeZone: BKK });
 function fmtTime(iso) { return !iso || String(iso).endsWith("T00:00:00.000Z") ? "" : hm(new Date(iso)); }
+async function cropBuyerStrip(file, lines, scanName) {
+  const bmp = await createImageBitmap(file);
+  const W = bmp.width;
+  const nz = (x) => String(x || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const key = nz(scanName).slice(0, 10);
+  const L = (lines || []).filter((l) => l && l.bbox);
+  const title = key ? L.find((l) => nz(l.text).includes(key)) : null;
+  if (!title) return null;
+  const h = Math.max(20, title.bbox.y1 - title.bbox.y0);
+  const above = L.filter((l) => l.bbox.y1 <= title.bbox.y0 + 2 && title.bbox.y0 - l.bbox.y1 < Math.max(4 * h, 0.2 * W) && !/ค่า|ยอด|ชำระ|เก็บเงิน|Order|Adjustment/i.test(l.text)).sort((a, b) => b.bbox.y1 - a.bbox.y1)[0];
+  let top, bottom;
+  if (above) { top = above.bbox.y0 - 10; bottom = above.bbox.y1 + 10; }
+  else { const c = (title.bbox.y0 + title.bbox.y1) / 2 - 0.133 * W; top = c - 0.045 * W; bottom = c + 0.045 * W; }
+  top = Math.max(0, top); bottom = Math.min(bmp.height, bottom);
+  if (bottom - top < 12) return null;
+  const left = 0.105 * W, right = 0.9 * W;
+  const sc = Math.max(2, 100 / (bottom - top));
+  const cv = document.createElement("canvas");
+  cv.width = Math.round((right - left) * sc); cv.height = Math.round((bottom - top) * sc);
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.filter = "grayscale(1) contrast(1.5)";
+  ctx.drawImage(bmp, left, top, right - left, bottom - top, 0, 0, cv.width, cv.height);
+  return cv;
+}
+async function readBuyerName(T, canvas) {
+  const w = await T.createWorker("eng", 1, {});
+  try {
+    await w.setParameters({ tessedit_char_whitelist: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-", tessedit_pageseg_mode: "7" });
+    const { data } = await w.recognize(canvas);
+    const text = data.text || "";
+    const tok = text.replace(/[^A-Za-z0-9._\-\s]/g, " ").split(/\s+/).filter((t) => t.length >= 4 && /[A-Za-z]/.test(t)).sort((a, b) => b.length - a.length)[0] || "";
+    return { text, name: tok };
+  } finally { await w.terminate(); }
+}
 function loadTesseract() {
   if (window.Tesseract) return Promise.resolve(window.Tesseract);
   return new Promise((res, rej) => {
@@ -646,10 +681,20 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       if (r.date) setDate(r.date);
       if (r.orderNo) setOrderNo(r.orderNo);
       if (r.orderAt) setOrderAt(r.orderAt);
-      if (r.customer && !customer.trim()) setCustomer(r.customer);
       const miss = [!r.productId && "สินค้า", r.gross == null && "ราคา", r.fee == null && "ค่าธรรมเนียม", !r.platformId && "Platform"].filter(Boolean);
       const dup = r.orderNo && (sales || []).some((x) => x.orderNo === r.orderNo);
-      setScanMsg((dup ? "⚠ ออเดอร์นี้เคยบันทึกแล้ว! " : "") + "อ่านรูปเสร็จ กรุณาตรวจค่าให้ถูกต้องก่อนบันทึก" + (miss.length ? " (อ่านไม่ได้: " + miss.join(", ") + ")" : "") + (!r.productId && r.scanName ? " — เลือกสินค้าเอง ระบบจะจำชื่อ \"" + r.scanName + "\" ไว้ให้ครั้งต่อไป" : ""));
+      let buyer = r.customer;
+      try {
+        const cv = await cropBuyerStrip(f, data.lines, r.scanName);
+        if (cv) {
+          setScanMsg("กำลังอ่านชื่อผู้ซื้อ…");
+          const b2 = await readBuyerName(T, cv);
+          setScanRaw((data.text || "") + "\n--- แถบชื่อผู้ซื้อ (อ่านรอบสอง) ---\n" + b2.text);
+          if (b2.name) buyer = b2.name;
+        }
+      } catch (err2) { /* ใช้ชื่อจากการอ่านรอบแรก */ }
+      if (buyer && !customer.trim()) setCustomer(buyer);
+      setScanMsg((dup ? "⚠ ออเดอร์นี้เคยบันทึกแล้ว! " : "") + "อ่านรูปเสร็จ กรุณาตรวจค่าให้ถูกต้องก่อนบันทึก" + (buyer ? " · ชื่อลูกค้า: " + buyer : " · อ่านชื่อลูกค้าไม่ได้ กรอกเอง") + (miss.length ? " (อ่านไม่ได้: " + miss.join(", ") + ")" : "") + (!r.productId && r.scanName ? " — เลือกสินค้าเอง ระบบจะจำชื่อ \"" + r.scanName + "\" ไว้ให้ครั้งต่อไป" : ""));
     } catch (err) { setScanMsg("อ่านรูปไม่สำเร็จ (ต้องต่ออินเทอร์เน็ตในครั้งแรก) กรอกเองได้เลย"); }
   }
   const [date, setDate] = useState(initial ? bkkDate(initial.date) : todayStr());
@@ -1357,7 +1402,7 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
-    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 37"));
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 38"));
 }
 const parseNum = (v) => parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, ""));
 function ImportModal({ products, platforms, onClose, onImport }) {
