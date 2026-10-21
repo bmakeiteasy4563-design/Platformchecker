@@ -508,7 +508,8 @@ async function buyerStrips(file, lines) {
   const W = bmp.width, H = bmp.height;
   const L = (lines || []).filter((l) => l && l.bbox);
   const bad = /ค่า|ยอด|ชำระ|เก็บเงิน|Order|Adjustment|ผู้ซื้อ|COPY/i;
-  const title = L.find((l) => String(l.text).trim().length >= 8 && !bad.test(l.text) && (String(l.text).match(/[A-Za-z]{3,}/g) || []).length >= 2);
+  const latin = (l) => (String(l.text).match(/[A-Za-z]{3,}/g) || []).length >= 2 && String(l.text).trim().length >= 8 && !bad.test(l.text);
+  const title = L.find((l) => latin(l) && l.bbox.x0 >= 0.2 * W && l.bbox.x1 - l.bbox.x0 >= 0.3 * W) || L.find(latin);
   const anchor = L.find((l) => /หมายเลขคำสั่งซื้อ|เลขคำสั่งซื้อ|Order\s*(ID|No)/i.test(l.text));
   const out = [];
   const make = (cy, halfH, label) => {
@@ -524,13 +525,19 @@ async function buyerStrips(file, lines) {
     out.push({ cv, label: label + " y" + Math.round(top) + "-" + Math.round(bottom) });
   };
   if (title) {
-    const h = Math.max(20, title.bbox.y1 - title.bbox.y0);
-    const above = L.filter((l) => l !== title && l.bbox.y1 <= title.bbox.y0 + 2 && title.bbox.y0 - l.bbox.y1 < Math.max(4 * h, 0.2 * W) && !bad.test(l.text)).sort((a, b) => b.bbox.y1 - a.bbox.y1)[0];
-    if (above) make((above.bbox.y0 + above.bbox.y1) / 2, (above.bbox.y1 - above.bbox.y0) / 2 + 12, "line");
-    make((title.bbox.y0 + title.bbox.y1) / 2 - 0.133 * W, 0.045 * W, "geo-title");
+    const tc = (title.bbox.y0 + title.bbox.y1) / 2;
+    const want = tc - 0.133 * W;
+    const near = L.filter((l) => l !== title && l.bbox.x0 >= 0.08 * W && !bad.test(l.text) && Math.abs((l.bbox.y0 + l.bbox.y1) / 2 - want) <= 0.05 * W).sort((a, b) => Math.abs((a.bbox.y0 + a.bbox.y1) / 2 - want) - Math.abs((b.bbox.y0 + b.bbox.y1) / 2 - want))[0];
+    if (near) make((near.bbox.y0 + near.bbox.y1) / 2, (near.bbox.y1 - near.bbox.y0) / 2 + 12, "line");
+    make(want, 0.045 * W, "geo-title");
   }
   if (anchor) make((anchor.bbox.y0 + anchor.bbox.y1) / 2 - 0.381 * W, 0.05 * W, "geo-order");
   return { strips: out, info: "lines=" + L.length + " title=" + (title ? "yes" : "no") + " order-anchor=" + (anchor ? "yes" : "no") + " size=" + W + "x" + H };
+}
+function plausibleUser(t) {
+  if (!t || t.length < 4) return false;
+  const up = (t.match(/[A-Z]/g) || []).length, lo = (t.match(/[a-z]/g) || []).length, dg = (t.match(/[0-9]/g) || []).length;
+  return !(lo === 0 && dg === 0 && up >= 5);
 }
 async function readBuyerName(T, canvas) {
   const w = await T.createWorker("eng", 1, {});
@@ -539,7 +546,8 @@ async function readBuyerName(T, canvas) {
     const { data } = await w.recognize(canvas);
     const text = data.text || "";
     const tok = text.replace(/[^A-Za-z0-9._\-\s]/g, " ").split(/\s+/).filter((t) => t.length >= 4 && /[A-Za-z]/.test(t)).sort((a, b) => b.length - a.length)[0] || "";
-    return { text, name: tok };
+    const conf = Math.round(data.confidence || 0);
+    return { text: text + " [conf " + conf + "]", name: plausibleUser(tok) && conf >= 60 ? tok : "" };
   } finally { await w.terminate(); }
 }
 function loadTesseract() {
@@ -703,8 +711,9 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
         }
       } catch (err2) { dbg.push("error: " + (err2 && err2.message ? err2.message : err2)); }
       setScanRaw((data.text || "") + "\n--- debug ชื่อผู้ซื้อ ---\n" + dbg.join("\n"));
+      if (buyer && !plausibleUser(buyer)) buyer = "";
       if (buyer && !customer.trim()) setCustomer(buyer);
-      setScanMsg((dup ? "⚠ ออเดอร์นี้เคยบันทึกแล้ว! " : "") + "อ่านรูปเสร็จ กรุณาตรวจค่าให้ถูกต้องก่อนบันทึก" + (buyer ? " · ชื่อลูกค้า: " + buyer : " · อ่านชื่อลูกค้าไม่ได้ กรอกเอง") + (miss.length ? " (อ่านไม่ได้: " + miss.join(", ") + ")" : "") + (!r.productId && r.scanName ? " — เลือกสินค้าเอง ระบบจะจำชื่อ \"" + r.scanName + "\" ไว้ให้ครั้งต่อไป" : ""));
+      setScanMsg((dup ? "⚠ ออเดอร์นี้เคยบันทึกแล้ว! " : "") + "อ่านรูปเสร็จ กรุณาตรวจค่าให้ถูกต้องก่อนบันทึก" + (buyer ? " · ชื่อลูกค้า: " + buyer + " (ตรวจให้ตรงกับรูปแถบชื่อด้านล่างช่องลูกค้า)" : " · อ่านชื่อลูกค้าไม่ชัด จึงไม่ได้กรอกให้ กรุณากรอกเอง") + (miss.length ? " (อ่านไม่ได้: " + miss.join(", ") + ")" : "") + (!r.productId && r.scanName ? " — เลือกสินค้าเอง ระบบจะจำชื่อ \"" + r.scanName + "\" ไว้ให้ครั้งต่อไป" : ""));
     } catch (err) { setScanMsg("อ่านรูปไม่สำเร็จ (ต้องต่ออินเทอร์เน็ตในครั้งแรก) กรอกเองได้เลย"); }
   }
   const [date, setDate] = useState(initial ? bkkDate(initial.date) : todayStr());
@@ -812,6 +821,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       React.createElement("label", { className: "field" }, React.createElement("span", null, "วันที่-เวลาสั่งซื้อ ตามแพลตฟอร์ม (ไม่บังคับ)"),
         React.createElement("input", { type: "datetime-local", value: orderAt, onChange: (e) => setOrderAt(e.target.value) })),
       React.createElement("label", { className: "field" }, React.createElement("span", null, "ชื่อ / ID ลูกค้า (ไม่บังคับ)"),
+        scanImg && React.createElement("img", { src: scanImg, alt: "", style: { display: "block", maxWidth: "100%", maxHeight: 44, objectFit: "contain", objectPosition: "left", marginBottom: 4, border: "1px solid #E1E5E0", borderRadius: 6, background: "#fff" } }),
         React.createElement("input", { list: "customer-names", value: customer, placeholder: "เช่น ชื่อผู้ซื้อใน Shopee", onChange: (e) => setCustomer(e.target.value) })),
       custInfo && React.createElement("div", { style: { fontSize: 12.5, color: custInfo.n > 0 ? "#1A7F4B" : "#68706B", fontWeight: 600 } }, custInfo.n > 0 ? "ลูกค้านี้เคยสั่งแล้ว " + custInfo.n + " ครั้ง (ยอดรวม " + fmtCurrency(custInfo.total) + ") ครั้งนี้เป็นครั้งที่ " + (custInfo.n + 1) : "ลูกค้าใหม่ ยังไม่เคยสั่ง"),
       custInfo && (custInfo.blocked || custInfo.cancelled > 0) && React.createElement("div", { style: { fontSize: 12.5, color: "#B42318", fontWeight: 700 } }, custInfo.blocked ? "🚫 ลูกค้านี้อยู่ในรายชื่อบล็อก" + (custInfo.cancelled ? " (เคยยกเลิก " + custInfo.cancelled + " ครั้ง)" : "") : "⚠ ลูกค้านี้เคยยกเลิกออเดอร์ " + custInfo.cancelled + " ครั้ง"),
@@ -1413,7 +1423,7 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
-    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 40"));
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 41"));
 }
 const parseNum = (v) => parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, ""));
 function ImportModal({ products, platforms, onClose, onImport }) {
