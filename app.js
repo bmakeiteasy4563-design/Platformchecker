@@ -597,7 +597,7 @@ function ProductPicker({ products, value, onChange }) {
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
   const list = products.filter((p) => { const h = [p.name, p.sku, p.aliases].join(" ").toLowerCase(); return terms.every((t) => h.includes(t)); });
   const close = () => { setOpen(false); setQ(""); };
-  const ph = (s) => React.createElement("div", { style: { width: s, height: s, aspectRatio: "1", borderRadius: 8, background: "#F1F3F0", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#99A09B" } }, React.createElement(Package, { size: 20 }));
+  const ph = (s) => React.createElement("div", { style: { width: s, height: s, borderRadius: 8, background: "#F1F3F0", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#99A09B" } }, React.createElement(Package, { size: 20 }));
   const thumb = (p, s) => p && p.image ? React.createElement("img", { src: p.image, alt: "", style: { width: s, height: s, objectFit: "cover", borderRadius: 8, flexShrink: 0 } }) : ph(s);
   return React.createElement(React.Fragment, null,
     React.createElement("div", { className: "field" },
@@ -608,13 +608,18 @@ function ProductPicker({ products, value, onChange }) {
         React.createElement(ChevronRight, { size: 16 }))),
     open && React.createElement("div", { className: "modal-overlay", onClick: close }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
       React.createElement("div", { className: "modal-head" }, React.createElement("div", { className: "modal-title" }, "เลือกสินค้า"), React.createElement("button", { type: "button", className: "icon-btn", onClick: close }, React.createElement(X, { size: 18 }))),
-      React.createElement("input", { type: "search", value: q, placeholder: "ค้นหาชื่อ / SKU", onChange: (e) => setQ(e.target.value), style: { width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
+      React.createElement("div", { style: { position: "sticky", top: 0, background: "#fff", zIndex: 1, paddingBottom: 6 } },
+        React.createElement("input", { type: "search", value: q, placeholder: "ค้นหาชื่อ / SKU", onChange: (e) => setQ(e.target.value), style: { width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } })),
       list.length === 0 ? React.createElement("div", { className: "mini-empty" }, "ไม่พบสินค้า") :
-      React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 10 } }, list.map((p) =>
-        React.createElement("button", { key: p.id, type: "button", onClick: () => { onChange(p.id); close(); }, style: { border: p.id === value ? "2px solid #0F2B26" : "1px solid #E1E5E0", borderRadius: 12, background: "#fff", padding: 6, cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, opacity: p.stock <= 0 ? 0.55 : 1 } },
-          p.image ? React.createElement("img", { src: p.image, alt: "", style: { width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 8 } }) : ph("100%"),
-          React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: "#1C201D", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", textAlign: "center" } }, p.name),
-          React.createElement("div", { style: { fontSize: 11, color: p.stock <= 0 ? "#B42318" : "#68706B" } }, "เหลือ " + p.stock)))))));
+      React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginTop: 4 } }, list.map((p) => {
+        const on = p.id === value;
+        return React.createElement("button", { key: p.id, type: "button", onClick: () => { onChange(p.id); close(); }, style: { display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", padding: 8, borderRadius: 12, background: on ? "#E7F2EC" : "#fff", border: on ? "2px solid #0F2B26" : "1px solid #E1E5E0", cursor: "pointer", fontFamily: "inherit", opacity: p.stock <= 0 ? 0.55 : 1 } },
+          thumb(p, 52),
+          React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+            React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: "#1C201D", whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.35 } }, p.name),
+            React.createElement("div", { style: { fontSize: 12, color: p.stock <= 0 ? "#B42318" : "#68706B", marginTop: 2 } }, (p.sku ? p.sku + " · " : "") + (p.stock <= 0 ? "หมด" : "เหลือ " + p.stock))),
+          on && React.createElement(Check, { size: 18, color: "#0F2B26" }));
+      })))));
 }
 function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales, onLearn }) {
   const todayStr = () => bkkDate(/* @__PURE__ */ new Date());
