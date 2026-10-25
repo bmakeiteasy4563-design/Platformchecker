@@ -109,6 +109,10 @@ function getPreviousRange(start, end) {
   return { start: startOfDay(prevStart), end: endOfDay(prevEnd) };
 }
 function computeSaleMetrics(sale, product, platform) {
+  if (sale.status === "cancelled") {
+    const extra = sale.lossExtra || 0;
+    return { gross: 0, coupon: 0, fee: 0, otherExpense: extra, netRevenue: 0 - extra, cost: 0, profit: 0 - extra };
+  }
   if (sale.status === "returned" || sale.status === "lost") {
     const uc = sale.unitCost != null ? sale.unitCost : product?.cost || 0;
     const extra = sale.lossExtra || 0;
@@ -133,7 +137,7 @@ function aggregate(sales, products, platforms) {
   const orderSet = /* @__PURE__ */ new Set();
   for (const s of sales) {
     const m = computeSaleMetrics(s, productMap[s.productId], platformMap[s.platformId]);
-    if (s.status === "returned" || s.status === "lost") { lossCount++; loss -= m.profit; } else orderSet.add(s.orderId || s.id);
+    if (s.status === "cancelled") { if (m.profit < 0) { lossCount++; loss -= m.profit; } } else if (s.status === "returned" || s.status === "lost") { lossCount++; loss -= m.profit; } else orderSet.add(s.orderId || s.id);
     gross += m.gross;
     coupon += m.coupon;
     fee += m.fee;
@@ -412,7 +416,7 @@ function TopProducts({ sales, products }) {
       if (!p) return;
       const m = computeSaleMetrics(s, p, null);
       if (!byProduct[p.id]) byProduct[p.id] = { product: p, qty: 0, gross: 0, profit: 0 };
-      byProduct[p.id].qty += s.status === "returned" || s.status === "lost" ? 0 : s.quantity;
+      byProduct[p.id].qty += s.status ? 0 : s.quantity;
       byProduct[p.id].gross += m.gross;
       byProduct[p.id].profit += m.profit;
     });
@@ -980,20 +984,22 @@ function ReconPage({ sales, products, platforms, onUpdates }) {
       React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: () => setPayFor(null) }, "ยกเลิก")))),
     showImport && React.createElement(ReportImport, { orders, platforms, onUpdates, onClose: () => setShowImport(false) }));
 }
-function StatusModal({ sale, productName, onClose, onSave }) {
+function StatusModal({ sale, productName, orderCount, onClose, onSave }) {
   const [status, setStatus] = useState(sale.status || "ok");
   const [restock, setRestock] = useState(sale.status === "returned" ? !!sale.restocked : true);
   const [extra, setExtra] = useState(sale.lossExtra ? String(sale.lossExtra) : "");
   const [comp, setComp] = useState(sale.compensation ? String(sale.compensation) : "");
+  const [all, setAll] = useState(true);
   const opt = (id, label) => React.createElement("button", { type: "button", key: id, className: "toggle" + (status === id ? " active" : ""), onClick: () => setStatus(id) }, label);
   const num = (label, value, set) => React.createElement("label", { className: "field" }, React.createElement("span", null, label), React.createElement("input", { type: "number", min: "0", step: "any", inputMode: "decimal", value, onChange: (e) => set(e.target.value) }));
   const note = (t) => React.createElement("div", { style: { fontSize: 12, color: "#68706B", margin: "8px 0" } }, t);
   function save() {
-    onSave(status === "ok" ? { status: void 0, restocked: false, lossExtra: void 0, compensation: void 0 } : { status, restocked: status === "returned" && restock, lossExtra: parseFloat(extra) || 0, compensation: status === "lost" ? parseFloat(comp) || 0 : 0 });
+    const patch = status === "ok" ? { status: void 0, restocked: false, lossExtra: void 0, compensation: void 0 } : status === "cancelled" ? { status, restocked: true, lossExtra: parseFloat(extra) || 0, compensation: 0 } : { status, restocked: status === "returned" && restock, lossExtra: parseFloat(extra) || 0, compensation: status === "lost" ? parseFloat(comp) || 0 : 0 };
+    onSave(patch, (status === "cancelled" || status === "ok") && orderCount > 1 && all);
   }
   return React.createElement("div", { className: "modal-overlay", onClick: onClose }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body" },
     React.createElement("div", { className: "section-title", style: { marginBottom: 10 } }, "สถานะ: " + productName),
-    React.createElement("div", { className: "toggle-group", style: { marginBottom: 10 } }, opt("ok", "ปกติ"), opt("returned", "ตีกลับ"), opt("lost", "สูญหาย")),
+    React.createElement("div", { className: "toggle-group", style: { marginBottom: 10 } }, opt("ok", "ปกติ"), opt("returned", "ตีกลับ"), opt("lost", "สูญหาย"), opt("cancelled", "ยกเลิก")),
     status === "returned" && React.createElement("div", null,
       note("ไม่นับยอดขายและค่าธรรมเนียมของรายการนี้ (แพลตฟอร์มคืนเงินผู้ซื้อ)"),
       React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 14, marginBottom: 10 } }, React.createElement("input", { type: "checkbox", checked: restock, onChange: (e) => setRestock(e.target.checked) }), "สินค้ากลับมาขายได้ (คืนสต็อก)"),
@@ -1003,6 +1009,10 @@ function StatusModal({ sale, productName, onClose, onSave }) {
       note("ไม่คืนสต็อก ต้นทุนสินค้านับเป็นขาดทุน ไม่นับยอดขายรายการนี้"),
       num("เงินชดเชยจากแพลตฟอร์ม (บาท)", comp, setComp),
       num("ค่าใช้จ่ายอื่น (บาท)", extra, setExtra)),
+    status === "cancelled" && React.createElement("div", null,
+      note("ผู้ซื้อยกเลิกก่อนส่งของ: ไม่นับยอดขาย ไม่มีค่าธรรมเนียม และคืนสต็อกให้อัตโนมัติ"),
+      num("ค่าใช้จ่ายอื่นที่เกิดขึ้น ถ้ามี (บาท)", extra, setExtra)),
+    (status === "cancelled" || status === "ok") && orderCount > 1 && React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 14, margin: "6px 0" } }, React.createElement("input", { type: "checkbox", checked: all, onChange: (e) => setAll(e.target.checked) }), (status === "cancelled" ? "ยกเลิกทั้งออเดอร์" : "คืนสถานะปกติทั้งออเดอร์") + " (" + orderCount + " รายการ)"),
     React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 14 }, onClick: save }, "บันทึกสถานะ"),
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: onClose }, "ยกเลิก"))));
 }
@@ -1020,7 +1030,7 @@ function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hay = (s) => {
     const p = productMap[s.productId] || {}, pl = platformMap[s.platformId] || {};
-    return [s.orderNo, s.customer, p.name, p.sku, p.aliases, pl.name, bkkDate(s.date), fmtBkkDate(s.date), s.orderAt ? bkkDate(s.orderAt) : "", s.price, (s.price || 0) * (s.quantity || 0)].join(" ").toLowerCase();
+    return [s.orderNo, s.customer, p.name, p.sku, p.aliases, pl.name, bkkDate(s.date), fmtBkkDate(s.date), s.orderAt ? bkkDate(s.orderAt) : "", s.price, (s.price || 0) * (s.quantity || 0), s.status === "cancelled" ? "ยกเลิก" : s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : ""].join(" ").toLowerCase();
   };
   const hit = new Set(terms.length ? rows.filter((s) => { const h = hay(s); return terms.every((t) => h.includes(t)); }).map((s) => s.orderId || s.id) : []);
   const shown = terms.length ? rows.filter((s) => hit.has(s.orderId || s.id)) : rows;
@@ -1040,15 +1050,15 @@ function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }
           React.createElement("div", { className: "tx-name", style: { whiteSpace: "normal", wordBreak: "break-word" } }, p?.name || "สินค้าไม่พบ"),
           React.createElement("div", { className: "tx-sub" }, pl?.name, " · ", fmtBkkDate(s.date), fmtTime(s.date) ? " " + fmtTime(s.date) : "", " · x", s.quantity, s.orderNo ? " · #" + s.orderNo : "", s.customer ? " · 👤 " + s.customer : "", s.orderAt ? " · สั่ง " + fmtBkkDate(s.orderAt) + " " + hm(s.orderAt) : "", sizes[s.orderId] > 1 ? " · ออเดอร์ " + sizes[s.orderId] + " รายการ" : "")),
         React.createElement("div", { className: "tx-figures" },
-          React.createElement("div", { className: "tx-gross", style: s.status ? { color: "#B42318", fontSize: 12 } : void 0 }, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : fmtCurrency(m.gross)),
-          React.createElement("div", { className: "tx-profit", style: s.status ? { color: "#B42318" } : void 0 }, s.status ? "ขาดทุน " : "กำไร ", s.status ? fmtCurrency(-m.profit) : fmtCurrency(m.profit))),
+          React.createElement("div", { className: "tx-gross", style: s.status ? { color: s.status === "cancelled" ? "#68706B" : "#B42318", fontSize: 12 } : void 0 }, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : s.status === "cancelled" ? "ยกเลิก" : fmtCurrency(m.gross)),
+          React.createElement("div", { className: "tx-profit", style: s.status ? { color: s.status === "cancelled" && !(s.lossExtra > 0) ? "#68706B" : "#B42318" } : void 0 }, s.status === "cancelled" && !(s.lossExtra > 0) ? "ไม่นับยอด" : s.status ? "ขาดทุน " + fmtCurrency(-m.profit) : "กำไร " + fmtCurrency(m.profit))),
         React.createElement("button", { className: "btn btn-ghost", "aria-label": "สถานะ", style: { marginRight: 6, padding: "2px 8px", fontSize: 12, minHeight: 0 }, onClick: () => setStatusFor(s) }, "สถานะ"), !s.status && React.createElement("button", { className: "icon-btn-sm", "aria-label": "แก้ไข", style: { marginRight: 6 }, onClick: () => setEditing(s) }, React.createElement(Edit2, { size: 14 })), React.createElement("button", { className: "icon-btn-sm", "aria-label": "ลบรายการ", onClick: () => {
           const grp = s.orderId && sizes[s.orderId] > 1 ? sales.filter((x) => x.orderId === s.orderId) : null;
           if (grp && window.confirm("ออเดอร์นี้มี " + grp.length + " รายการ\nตกลง = ลบทั้งออเดอร์\nยกเลิก = เลือกลบเฉพาะรายการนี้")) { grp.forEach((x) => onDelete(x.id)); return; }
           if (window.confirm("ลบรายการนี้? สต็อกสินค้าจะถูกคืนกลับ")) onDelete(s.id);
         } }, React.createElement(Trash2, { size: 14 })));
     })),
-    !terms.length && rows.length > limit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 12 }, onClick: () => setLimit(limit + 20) }, "แสดงเพิ่ม"), editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body" }, React.createElement(QuickSaleForm, { products, platforms, sales, initial: editing, onCancel: () => setEditing(null), onSubmit: (u) => { onEdit(u); setEditing(null); } })))), statusFor && React.createElement(StatusModal, { sale: statusFor, productName: (productMap[statusFor.productId] || {}).name || "", onClose: () => setStatusFor(null), onSave: (patch) => { onStatus(statusFor.id, patch); setStatusFor(null); } }));
+    !terms.length && rows.length > limit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 12 }, onClick: () => setLimit(limit + 20) }, "แสดงเพิ่ม"), editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body" }, React.createElement(QuickSaleForm, { products, platforms, sales, initial: editing, onCancel: () => setEditing(null), onSubmit: (u) => { onEdit(u); setEditing(null); } })))), statusFor && React.createElement(StatusModal, { sale: statusFor, productName: (productMap[statusFor.productId] || {}).name || "", orderCount: statusFor.orderId ? sales.filter((x) => x.orderId === statusFor.orderId && x.status === statusFor.status).length : 1, onClose: () => setStatusFor(null), onSave: (patch, all) => { if (all) sales.filter((x) => x.orderId === statusFor.orderId && x.status === statusFor.status).forEach((x) => onStatus(x.id, patch)); else onStatus(statusFor.id, patch); setStatusFor(null); } }));
 }
 function PlatformManager({ platforms, sales, onChange }) {
   const [editing, setEditing] = useState(null);
@@ -1201,7 +1211,7 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     const head = ["วันที่", "สินค้า", "SKU", "แพลตฟอร์ม", "จำนวน", "ราคา/ชิ้น", "ยอดขาย", "คูปอง", "ค่าธรรมเนียม", "รายจ่ายอื่นๆ", "ต้นทุน", "กำไร", "สถานะ", "เวลา", "ลูกค้า", "เลขออเดอร์", "สั่งซื้อตามแพลตฟอร์ม"];
     const rows = [...sales].sort((a, b) => new Date(a.date) - new Date(b.date)).map((s) => {
       const m = computeSaleMetrics(s, pm[s.productId], plm[s.platformId]);
-      return [ymd(s.date), pm[s.productId]?.name || "", pm[s.productId]?.sku || "", plm[s.platformId]?.name || "", s.quantity, s.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : "ปกติ", fmtTime(s.date), s.customer || "", s.orderNo || "", s.orderAt ? bkkDate(s.orderAt) + " " + hm(s.orderAt) : ""];
+      return [ymd(s.date), pm[s.productId]?.name || "", pm[s.productId]?.sku || "", plm[s.platformId]?.name || "", s.quantity, s.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : s.status === "cancelled" ? "ยกเลิก" : "ปกติ", fmtTime(s.date), s.customer || "", s.orderNo || "", s.orderAt ? bkkDate(s.orderAt) + " " + hm(s.orderAt) : ""];
     });
     return [head, ...rows];
   };
@@ -1611,7 +1621,7 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
       if (!p) return;
       const m = computeSaleMetrics(s, p, platforms.find((pl) => pl.id === s.platformId));
       if (!byProduct[p.id]) byProduct[p.id] = { product: p, qty: 0, gross: 0, profit: 0 };
-      byProduct[p.id].qty += s.status === "returned" || s.status === "lost" ? 0 : s.quantity;
+      byProduct[p.id].qty += s.status ? 0 : s.quantity;
       byProduct[p.id].gross += m.gross;
       byProduct[p.id].profit += m.profit;
     });
