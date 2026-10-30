@@ -1711,46 +1711,72 @@ function PlatformFeeReport({ sales, products, platforms }) {
 }
 function CustomerStats({ sales, products }) {
   const [sort, setSort] = useState("orders");
+  const [seg, setSeg] = useState("all");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(null);
   const [limit, setLimit] = useState(15);
   const pm = Object.fromEntries(products.map((p) => [p.id, p]));
+  const nameOf = (id) => (pm[id] || {}).name || "สินค้าไม่พบ";
   const cn = (x) => String(x || "").trim().toLowerCase();
+  const day = (d) => new Date(d).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "2-digit", timeZone: BKK });
   const { list, anon } = useMemo(() => {
-    const map = {}, anonSet = new Set();
+    const map = Object.create(null), anonSet = new Set();
     sales.forEach((s) => {
       if (s.status) return;
       const k = cn(s.customer);
       const ok = s.orderId || s.id;
       if (!k) { anonSet.add(ok); return; }
-      const c = map[k] || (map[k] = { name: String(s.customer).trim(), orders: {}, total: 0, last: s.date });
-      (c.orders[ok] || (c.orders[ok] = { key: ok, date: s.date, orderNo: s.orderNo, rows: [], amount: 0 })).rows.push(s);
-      c.orders[ok].amount += (s.price || 0) * (s.quantity || 0);
-      c.total += (s.price || 0) * (s.quantity || 0);
+      const c = map[k] || (map[k] = { name: String(s.customer).trim(), orders: Object.create(null), items: Object.create(null), total: 0, first: s.date, last: s.date });
+      const o = c.orders[ok] || (c.orders[ok] = { key: ok, date: s.date, orderNo: s.orderNo, rows: [], amount: 0 });
+      o.rows.push(s);
+      const amt = (s.price || 0) * (s.quantity || 0);
+      o.amount += amt;
+      c.total += amt;
       if (new Date(s.date) > new Date(c.last)) c.last = s.date;
+      if (new Date(s.date) < new Date(c.first)) c.first = s.date;
+      const it = c.items[s.productId] || (c.items[s.productId] = { id: s.productId, qty: 0 });
+      it.qty += s.quantity || 0;
     });
     return { list: Object.values(map).map((c) => ({ ...c, count: Object.keys(c.orders).length })), anon: anonSet.size };
   }, [sales]);
   const repeat = list.filter((c) => c.count >= 2).length;
-  const shown = list.filter((c) => !cn(q) || cn(c.name).includes(cn(q))).sort((a, b) => sort === "orders" ? b.count - a.count || b.total - a.total : sort === "total" ? b.total - a.total : new Date(b.last) - new Date(a.last));
-  const tg = (id, label) => React.createElement("button", { key: id, className: "toggle" + (sort === id ? " active" : ""), onClick: () => setSort(id) }, label);
+  const once = list.length - repeat;
+  const shown = list.filter((c) => (seg === "all" || (seg === "repeat" ? c.count >= 2 : c.count < 2)) && (!cn(q) || cn(c.name).includes(cn(q)))).sort((a, b) => sort === "orders" ? b.count - a.count || b.total - a.total : sort === "total" ? b.total - a.total : new Date(b.last) - new Date(a.last));
+  const tg = (cur, set, id, label) => React.createElement("button", { key: id, className: "toggle" + (cur === id ? " active" : ""), onClick: () => { set(id); setLimit(15); } }, label);
+  const card = (c) => {
+    const isOpen = open === c.name;
+    const rep = c.count >= 2;
+    const prods = Object.values(c.items).sort((a, b) => b.qty - a.qty);
+    const prodTxt = prods.slice(0, 3).map((i) => nameOf(i.id) + " ×" + i.qty).join(", ") + (prods.length > 3 ? " +" + (prods.length - 3) + " รายการ" : "");
+    return React.createElement("div", { key: c.name, style: { borderTop: "1px solid #EEF0ED", padding: "8px 0" } },
+      React.createElement("button", { type: "button", onClick: () => setOpen(isOpen ? null : c.name), style: { all: "unset", display: "flex", alignItems: "flex-start", gap: 8, width: "100%", cursor: "pointer" } },
+        React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+          React.createElement("div", { style: { fontSize: 14, fontWeight: 700, wordBreak: "break-word" } }, c.name,
+            React.createElement("span", { style: { marginLeft: 6, fontSize: 11, fontWeight: 700, color: rep ? "#1A7F4B" : "#68706B", background: rep ? "#E6F4EC" : "#EEF0ED", borderRadius: 8, padding: "1px 7px", whiteSpace: "nowrap" } }, rep ? "ซื้อซ้ำ" : "ซื้อครั้งเดียว")),
+          React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, rep ? "ครั้งแรก " + day(c.first) + " · ล่าสุด " + day(c.last) : "ซื้อเมื่อ " + day(c.last)),
+          React.createElement("div", { style: { fontSize: 12, color: "#1C201D", marginTop: 2, wordBreak: "break-word" } }, "สินค้า: " + prodTxt)),
+        React.createElement("div", { style: { textAlign: "right", flexShrink: 0 } },
+          React.createElement("div", { style: { fontWeight: 700, fontSize: 14 } }, c.count + " ครั้ง"),
+          React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, fmtCurrency(c.total)))),
+      isOpen && React.createElement("div", { style: { marginTop: 6, background: "#F6F7F5", borderRadius: 10, padding: "4px 10px" } },
+        Object.values(c.orders).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 30).map((o) => React.createElement("div", { key: o.key, style: { padding: "6px 0", borderTop: "1px solid #E7E9E5" } },
+          React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, fontWeight: 600 } },
+            React.createElement("span", { style: { minWidth: 0, wordBreak: "break-word" } }, day(o.date) + (fmtTime(o.date) ? " " + fmtTime(o.date) : "") + (o.orderNo ? " · #" + o.orderNo : "")),
+            React.createElement("span", { style: { flexShrink: 0 } }, fmtCurrency(o.amount))),
+          o.rows.map((r) => React.createElement("div", { key: r.id, style: { fontSize: 12.5, color: "#68706B", wordBreak: "break-word" } }, "• " + nameOf(r.productId) + " ×" + r.quantity + " (" + fmtCurrency(r.price) + "/ชิ้น)"))))));
+  };
   return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
     React.createElement("div", { className: "section-title", style: { marginBottom: 6 } }, "สถิติลูกค้า"),
     list.length === 0 ? React.createElement("div", { className: "mini-empty" }, "ยังไม่มีข้อมูลลูกค้า ใส่ชื่อ/ID ลูกค้าตอนบันทึกการขายเพื่อดูสถิติ") : React.createElement("div", null,
-      React.createElement("div", { style: { fontSize: 13, color: "#68706B", marginBottom: 8 } }, "ลูกค้า " + list.length + " คน · ซื้อซ้ำ " + repeat + " คน (" + Math.round(repeat / list.length * 100) + "%)" + (anon > 0 ? " · ไม่ระบุชื่อ " + anon + " ออเดอร์" : "")),
+      React.createElement("div", { style: { fontSize: 13, color: "#68706B", marginBottom: 8 } }, "ลูกค้า " + list.length + " คน · ซื้อซ้ำ " + repeat + " คน (" + Math.round(repeat / list.length * 100) + "%) · ซื้อครั้งเดียว " + once + " คน"),
+      anon > 0 && React.createElement("div", { style: { fontSize: 12, color: "#B8862F", marginBottom: 8 } }, "มี " + anon + " ออเดอร์ที่ไม่ได้ใส่ชื่อ/ID ลูกค้า จึงดูไม่ได้ว่าซื้อซ้ำไหม"),
       React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 } },
-        React.createElement("div", { className: "toggle-group" }, tg("orders", "สั่งบ่อยสุด"), tg("total", "ยอดสูงสุด"), tg("last", "ล่าสุด")),
+        React.createElement("div", { className: "toggle-group" }, tg(seg, setSeg, "all", "ทั้งหมด " + list.length), tg(seg, setSeg, "repeat", "ซื้อซ้ำ " + repeat), tg(seg, setSeg, "once", "ครั้งเดียว " + once))),
+      React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 } },
+        React.createElement("div", { className: "toggle-group" }, tg(sort, setSort, "orders", "สั่งบ่อยสุด"), tg(sort, setSort, "total", "ยอดสูงสุด"), tg(sort, setSort, "last", "ล่าสุด")),
         React.createElement("input", { type: "search", value: q, placeholder: "ค้นหาชื่อลูกค้า", onChange: (e) => { setQ(e.target.value); setLimit(15); }, style: { flex: 1, minWidth: 120, padding: "6px 10px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 13 } })),
-      shown.slice(0, limit).map((c) => React.createElement("div", { key: c.name, style: { borderTop: "1px solid #EEF0ED", padding: "8px 0" } },
-        React.createElement("button", { type: "button", onClick: () => setOpen(open === c.name ? null : c.name), style: { all: "unset", display: "flex", alignItems: "center", gap: 8, width: "100%", cursor: "pointer" } },
-          React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-            React.createElement("div", { style: { fontSize: 14, fontWeight: 700, wordBreak: "break-word" } }, c.name, c.count >= 2 && React.createElement("span", { style: { marginLeft: 6, fontSize: 11, fontWeight: 700, color: "#1A7F4B", background: "#E6F4EC", borderRadius: 8, padding: "1px 7px" } }, "ซื้อซ้ำ")),
-            React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, "ล่าสุด " + fmtBkkDate(c.last))),
-          React.createElement("div", { style: { textAlign: "right" } }, React.createElement("div", { style: { fontWeight: 700, fontSize: 14 } }, c.count + " ครั้ง"), React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, fmtCurrency(c.total)))),
-        open === c.name && React.createElement("div", { style: { marginTop: 6, background: "#F6F7F5", borderRadius: 10, padding: "6px 10px" } },
-          Object.values(c.orders).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 20).map((o) => React.createElement("div", { key: o.key, style: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12.5, padding: "3px 0" } },
-            React.createElement("span", { style: { minWidth: 0, wordBreak: "break-word" } }, fmtBkkDate(o.date) + (o.orderNo ? " · #" + o.orderNo : "") + " · " + o.rows.map((r) => (pm[r.productId] || {}).name || "?").join(", ")),
-            React.createElement("span", { style: { fontWeight: 600, flexShrink: 0 } }, fmtCurrency(o.amount))))))),
+      shown.length === 0 && React.createElement("div", { className: "mini-empty" }, "ไม่พบลูกค้า"),
+      shown.slice(0, limit).map(card),
       shown.length > limit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: () => setLimit(limit + 15) }, "แสดงเพิ่ม")));
 }
 function LoginScreen({ onLogin }) {
