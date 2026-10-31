@@ -62,40 +62,33 @@ var fmtCurrency = (n) => "\u0E3F" + (Math.round((n || 0) * 100) / 100).toLocaleS
   maximumFractionDigits: 2
 });
 var fmtNumber = (n) => (n || 0).toLocaleString("th-TH");
-var fmtDateShort = (d) => new Date(d).toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+var fmtDateShort = (d) => new Date(d).toLocaleDateString("th-TH", { day: "numeric", month: "short", timeZone: "Asia/Bangkok" });
 function startOfDay(d) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
+  return new Date(bkkDate(d) + "T00:00:00+07:00");
 }
 function endOfDay(d) {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
+  return new Date(bkkDate(d) + "T23:59:59.999+07:00");
 }
 function getRange(preset, customStart, customEnd) {
   const now = /* @__PURE__ */ new Date();
+  const [y, m] = bkkDate(now).split("-").map(Number);
+  const shift = (days) => new Date(now.getTime() + days * 864e5);
+  const noon = (yy, mm, dd) => new Date(Date.UTC(yy, mm - 1, dd, 12));
   if (preset === "today") {
     return { start: startOfDay(now), end: endOfDay(now) };
   }
   if (preset === "yesterday") {
-    const y = new Date(now);
-    y.setDate(y.getDate() - 1);
-    return { start: startOfDay(y), end: endOfDay(y) };
+    const y1 = shift(-1);
+    return { start: startOfDay(y1), end: endOfDay(y1) };
   }
   if (preset === "7d") {
-    const s = new Date(now);
-    s.setDate(s.getDate() - 6);
-    return { start: startOfDay(s), end: endOfDay(now) };
+    return { start: startOfDay(shift(-6)), end: endOfDay(now) };
   }
   if (preset === "month") {
-    const s = new Date(now.getFullYear(), now.getMonth(), 1);
-    return { start: startOfDay(s), end: endOfDay(now) };
+    return { start: startOfDay(noon(y, m, 1)), end: endOfDay(now) };
   }
   if (preset === "lastMonth") {
-    const s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const e = new Date(now.getFullYear(), now.getMonth(), 0);
-    return { start: startOfDay(s), end: endOfDay(e) };
+    return { start: startOfDay(noon(y, m - 1, 1)), end: endOfDay(noon(y, m, 0)) };
   }
   if (preset === "custom" && customStart && customEnd) {
     return { start: startOfDay(customStart), end: endOfDay(customEnd) };
@@ -148,25 +141,25 @@ function aggregate(sales, products, platforms) {
   const margin = gross > 0 ? profit / gross * 100 : 0;
   return { gross, coupon, fee, netRevenue, cost, profit, orders: orderSet.size, margin, loss, lossCount };
 }
-function expenseForRange(expenses, start, end) {
-  let total = 0;
-  const cur = new Date(start.getFullYear(), start.getMonth(), 1);
-  const last = new Date(end.getFullYear(), end.getMonth(), 1);
-  const dayOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  while (cur <= last) {
-    const y = cur.getFullYear(), mo = cur.getMonth();
-    const key = y + "-" + String(mo + 1).padStart(2, "0");
-    const dim = new Date(y, mo + 1, 0).getDate();
-    const ms = new Date(y, mo, 1), me = new Date(y, mo, dim, 23, 59, 59, 999);
-    const os = start > ms ? start : ms, oe = end < me ? end : me;
-    const days = Math.max(0, Math.round((dayOf(oe) - dayOf(os)) / 864e5) + 1);
-    const monthSum = expenses.reduce((a, e) => a + (e.bill ? 0 : (e.recurring ? e.month <= key : e.month === key) ? e.amount : 0), 0);
-    total += monthSum * days / dim;
-    cur.setMonth(cur.getMonth() + 1);
+function monthsCovered(start, end) {
+  const dn = (y, m, d) => Date.UTC(y, m - 1, d) / 864e5;
+  const [sy, sm, sd] = bkkDate(start).split("-").map(Number), [ey, em, ed] = bkkDate(end).split("-").map(Number);
+  const sN = dn(sy, sm, sd), eN = dn(ey, em, ed);
+  const out = [];
+  let y = sy, mo = sm;
+  while (y < ey || y === ey && mo <= em) {
+    const dim = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    if (sN <= dn(y, mo, 1) && dn(y, mo, dim) <= eN) out.push(y + "-" + String(mo).padStart(2, "0"));
+    mo++;
+    if (mo > 12) { mo = 1; y++; }
   }
-  const sd = dayOf(start), ed = dayOf(end);
-  for (const e of expenses) if (e.bill) { const [y, m] = e.month.split("-").map(Number); const monthEnd = new Date(y, m, 0); if (monthEnd >= sd && monthEnd <= ed) total += e.amount; }
-  return total;
+  return out;
+}
+function expenseInMonth(e, key) {
+  return e.bill ? e.month === key : e.recurring ? e.month <= key : e.month === key;
+}
+function expenseForMonths(expenses, keys) {
+  return keys.reduce((sum, key) => sum + expenses.reduce((a, e) => a + (expenseInMonth(e, key) ? e.amount : 0), 0), 0);
 }
 function downloadFile(name, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -284,8 +277,8 @@ function DateFilter({ preset, setPreset, customRange, setCustomRange }) {
     }
   ), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => setOpen(false) }, "\u0E15\u0E01\u0E25\u0E07"))));
 }
-function ProfitHero({ profit, trend, hasBaseline, expense, pending, loss, lossCount }) {
-  return /* @__PURE__ */ React.createElement("div", { className: "hero-card" }, /* @__PURE__ */ React.createElement("div", { className: "hero-label" }, "NET PROFIT"), /* @__PURE__ */ React.createElement("div", { className: "hero-value" }, fmtCurrency(profit)), expense > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "หักรายจ่าย/บิลแล้ว " + fmtCurrency(expense)), pending > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "บิลเดือนนี้สะสม " + fmtCurrency(pending) + " (หักตอนสิ้นเดือน)"), lossCount > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "รวมขาดทุนตีกลับ/สูญหายแล้ว " + fmtCurrency(loss) + " (" + lossCount + " รายการ)"), /* @__PURE__ */ React.createElement("div", { className: "hero-trend-row" }, /* @__PURE__ */ React.createElement(Trend, { value: trend, hasBaseline }), hasBaseline && /* @__PURE__ */ React.createElement("span", { className: "hero-trend-caption" }, "\u0E40\u0E17\u0E35\u0E22\u0E1A\u0E0A\u0E48\u0E27\u0E07\u0E01\u0E48\u0E2D\u0E19\u0E2B\u0E19\u0E49\u0E32")), /* @__PURE__ */ React.createElement("svg", { className: "hero-deco", viewBox: "0 0 300 90", preserveAspectRatio: "none" }, /* @__PURE__ */ React.createElement(
+function ProfitHero({ profit, trend, hasBaseline, expense, pending, deducted, loss, lossCount }) {
+  return /* @__PURE__ */ React.createElement("div", { className: "hero-card" }, /* @__PURE__ */ React.createElement("div", { className: "hero-label" }, deducted ? "NET PROFIT" : "PROFIT"), /* @__PURE__ */ React.createElement("div", { className: "hero-value" }, fmtCurrency(profit)), expense > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "หักรายจ่าย/บิลของทั้งเดือนแล้ว " + fmtCurrency(expense)), pending > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "ยังไม่หักรายจ่าย/บิลของเดือนนี้ " + fmtCurrency(pending) + " (ดูยอดสุทธิในช่วง เดือนนี้)"), lossCount > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "รวมขาดทุนตีกลับ/สูญหายแล้ว " + fmtCurrency(loss) + " (" + lossCount + " รายการ)"), /* @__PURE__ */ React.createElement("div", { className: "hero-trend-row" }, /* @__PURE__ */ React.createElement(Trend, { value: trend, hasBaseline }), hasBaseline && /* @__PURE__ */ React.createElement("span", { className: "hero-trend-caption" }, deducted ? "เทียบช่วงก่อนหน้า (กำไรก่อนหักรายจ่าย)" : "เทียบช่วงก่อนหน้า")), /* @__PURE__ */ React.createElement("svg", { className: "hero-deco", viewBox: "0 0 300 90", preserveAspectRatio: "none" }, /* @__PURE__ */ React.createElement(
     "path",
     {
       d: "M0,70 C40,50 60,80 100,55 C140,30 160,60 200,35 C240,10 260,45 300,20",
@@ -312,8 +305,7 @@ function SalesChart({ sales, products, platforms }) {
     const days = [];
     const now = /* @__PURE__ */ new Date();
     for (let i = range - 1; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
+      const d = new Date(now.getTime() - i * 864e5);
       days.push({ key: startOfDay(d).getTime(), label: fmtDateShort(d) });
     }
     const byDay = {};
@@ -440,6 +432,26 @@ function RecentSales({ sales, products, platforms }) {
     return /* @__PURE__ */ React.createElement("div", { className: "tx-row", key: s.id }, /* @__PURE__ */ React.createElement("span", { className: "tx-dot", style: { background: pl?.color || "#999" } }), /* @__PURE__ */ React.createElement("div", { className: "tx-info" }, /* @__PURE__ */ React.createElement("div", { className: "tx-name" }, p?.name || "\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E44\u0E21\u0E48\u0E1E\u0E1A"), /* @__PURE__ */ React.createElement("div", { className: "tx-sub" }, pl?.name, " \xB7 ", fmtDateShort(s.date), " \xB7 x", s.quantity)), /* @__PURE__ */ React.createElement("div", { className: "tx-figures" }, /* @__PURE__ */ React.createElement("div", { className: "tx-gross" }, fmtCurrency(m.gross)), /* @__PURE__ */ React.createElement("div", { className: "tx-profit" }, "\u0E01\u0E33\u0E44\u0E23 ", fmtCurrency(m.profit))));
   })));
 }
+function ExpenseBreakdown({ expenses, months }) {
+  const grp = Object.create(null);
+  months.forEach((key) => expenses.forEach((e) => {
+    if (!expenseInMonth(e, key)) return;
+    const k = String(e.name || "").trim().toLowerCase();
+    const g = grp[k] || (grp[k] = { name: String(e.name || "").trim() || "ไม่ระบุ", total: 0, count: 0 });
+    g.total += e.amount;
+    g.count += 1;
+  }));
+  const rows = Object.values(grp).sort((a, b) => b.total - a.total);
+  if (rows.length === 0) return null;
+  const total = rows.reduce((a, g) => a + g.total, 0);
+  return React.createElement("div", { className: "card section-card" },
+    React.createElement("div", { className: "section-title", style: { marginBottom: 8 } }, "รายจ่าย/บิลที่หักในช่วงนี้"),
+    rows.map((g) => React.createElement("div", { key: g.name, style: { display: "flex", justifyContent: "space-between", gap: 8, padding: "4px 0", fontSize: 13.5 } },
+      React.createElement("span", { style: { minWidth: 0, wordBreak: "break-word" } }, g.name + (g.count > 1 ? " (" + g.count + " รายการ)" : "")),
+      React.createElement("span", { style: { fontWeight: 700 } }, fmtCurrency(g.total)))),
+    React.createElement("div", { style: { display: "flex", justifyContent: "space-between", borderTop: "1px solid #E1E5E0", marginTop: 6, paddingTop: 8, fontWeight: 800 } },
+      React.createElement("span", null, "รวม"), React.createElement("span", null, fmtCurrency(total))));
+}
 function Dashboard({ sales, products, platforms, expenses, dateState, setDateState, onGoto }) {
   const { preset, customRange } = dateState;
   const { start, end } = getRange(preset, customRange.start, customRange.end);
@@ -452,11 +464,15 @@ function Dashboard({ sales, products, platforms, expenses, dateState, setDateSta
     const d = new Date(s.date);
     return d >= pStart && d <= pEnd;
   });
-  const withExp = (a, st, en) => { const e = expenseForRange(expenses || [], st, en); const profit = a.profit - e; return { ...a, profit, expense: e, margin: a.gross > 0 ? profit / a.gross * 100 : 0 }; };
-  const current = withExp(aggregate(filteredSales, products, platforms), start, end);
-  const previous = withExp(aggregate(prevSales, products, platforms), pStart, pEnd);
-  const endKey = end.getFullYear() + "-" + String(end.getMonth() + 1).padStart(2, "0");
-  const pendingBills = new Date(end.getFullYear(), end.getMonth() + 1, 0) > new Date(end.getFullYear(), end.getMonth(), end.getDate()) ? (expenses || []).filter((e) => e.bill && e.month === endKey).reduce((a, e) => a + e.amount, 0) : 0;
+  const exps = expenses || [];
+  const expMonths = preset === "month" ? [bkkDate(/* @__PURE__ */ new Date()).slice(0, 7)] : preset === "lastMonth" || preset === "custom" ? monthsCovered(start, end) : [];
+  const deducted = expMonths.length > 0;
+  const expenseTotal = expenseForMonths(exps, expMonths);
+  const baseCur = aggregate(filteredSales, products, platforms);
+  const basePrev = aggregate(prevSales, products, platforms);
+  const current = { ...baseCur, profit: baseCur.profit - expenseTotal, expense: expenseTotal };
+  const previous = basePrev;
+  const pendingExp = deducted ? 0 : expenseForMonths(exps, [bkkDate(end).slice(0, 7)]);
   const hasBaseline = prevSales.length > 0;
   if (sales.length === 0) {
     return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(Header, { title: "MIES TRADING", subtitle: "Sales Overview", lowStockCount: 0 }), /* @__PURE__ */ React.createElement(
@@ -489,14 +505,15 @@ function Dashboard({ sales, products, platforms, expenses, dateState, setDateSta
     ProfitHero,
     {
       profit: current.profit,
-      trend: pctChange(current.profit, previous.profit),
+      trend: pctChange(baseCur.profit, basePrev.profit),
       hasBaseline,
       expense: current.expense,
-      pending: pendingBills,
+      pending: pendingExp,
+      deducted,
       loss: current.loss,
       lossCount: current.lossCount
     }
-  ), /* @__PURE__ */ React.createElement(KPIGrid, { current, previous, hasBaseline }), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement(LowStockAlert, { products, onNavigate: () => onGoto("products") }), /* @__PURE__ */ React.createElement(PlatformPerformance, { sales: filteredSales, products, platforms }), /* @__PURE__ */ React.createElement(TopProducts, { sales: filteredSales, products }), /* @__PURE__ */ React.createElement(RecentSales, { sales, products, platforms }));
+  ), /* @__PURE__ */ React.createElement(KPIGrid, { current, previous, hasBaseline }), deducted && React.createElement(ExpenseBreakdown, { expenses: exps, months: expMonths }), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement(LowStockAlert, { products, onNavigate: () => onGoto("products") }), /* @__PURE__ */ React.createElement(PlatformPerformance, { sales: filteredSales, products, platforms }), /* @__PURE__ */ React.createElement(TopProducts, { sales: filteredSales, products }), /* @__PURE__ */ React.createElement(RecentSales, { sales, products, platforms }));
 }
 const BKK = "Asia/Bangkok";
 const bkkParts = (d) => { const o = {}; new Intl.DateTimeFormat("en-CA", { timeZone: BKK, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(d)).forEach((p) => { o[p.type] = p.value; }); return o; };
@@ -1184,7 +1201,7 @@ function ExpenseManager({ expenses, onChange }) {
       React.createElement("span", { style: { fontWeight: 700, fontSize: 14, marginRight: 4 } }, fmtCurrency(e.amount)),
       React.createElement("button", { className: "icon-btn-sm", "aria-label": "แก้ไข", onClick: () => setEditing({ ...e, amount: String(e.amount), slipData: null, slipRemoved: false }) }, React.createElement(Edit2, { size: 14 })),
       React.createElement("button", { className: "icon-btn-sm", "aria-label": "ลบ", onClick: () => remove(e) }, React.createElement(Trash2, { size: 14 })))),
-    React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "บิลสะสมไว้ แล้วหักรวมทีเดียวตอนสิ้นเดือน / รายเดือนหักเฉลี่ยตามจำนวนวัน / สลิปเก็บในเครื่องนี้ (ไม่ขึ้นออนไลน์)"),
+    React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "รายจ่าย/บิลทั้งหมดหักรวมเป็นยอดทั้งเดือนในช่วง เดือนนี้ / เดือนที่แล้ว (ไม่หักในรายวัน) / สลิปเก็บในเครื่องนี้ (ไม่ขึ้นออนไลน์)"),
     viewSlip && React.createElement(SlipViewer, { id: viewSlip.id, name: viewSlip.name, onClose: () => setViewSlip(null) }),
     editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (ev) => ev.stopPropagation() }, React.createElement("div", { className: "modal-body" },
       React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, (editing.isNew ? "เพิ่ม" : "แก้ไข") + (editing.bill ? "บิล" : "รายจ่ายรายเดือน")),
@@ -1203,7 +1220,7 @@ function ExpenseManager({ expenses, onChange }) {
 }
 function DataBackup({ products, sales, platforms, expenses, onRestore }) {
   const pad = (n) => String(n).padStart(2, "0");
-  const stamp = () => { const d = /* @__PURE__ */ new Date(); return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()); };
+  const stamp = () => bkkDate(/* @__PURE__ */ new Date()).replace(/-/g, "");
   const ymd = (v) => bkkDate(v);
   const salesTable = () => {
     const pm = Object.fromEntries(products.map((p) => [p.id, p]));
@@ -1819,7 +1836,7 @@ function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [dateState, setDateState] = useState({
     preset: "today",
-    customRange: { start: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), end: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10) }
+    customRange: { start: bkkDate(/* @__PURE__ */ new Date()), end: bkkDate(/* @__PURE__ */ new Date()) }
   });
   const cloudOn = cloudConfigured();
   const [session, setSession] = useState(cloudOn ? getSession() : null);
