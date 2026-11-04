@@ -9,7 +9,12 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell
 } from "recharts";
 import {
   Home,
@@ -609,7 +614,19 @@ function parseOrderText(raw, products, platforms) {
     }
   }
   if (!customer) customer = nl.filter((l) => !bad.test(l)).map(userTok).find((t) => okTok(t) && /\d/.test(t)) || "";
-  return { gross, net, fee, qty, orderNo, date, orderAt, customer, productId, cands, scanName, platformId: pl ? pl.id : "" };
+  const payKeys = [[/เครดิต|เดบิต|credit|debit/i, "บัตรเครดิต/บัตรเดบิต", true], [/shopee\s*pay/i, "ShopeePay", true], [/ปลายทาง|\bcod\b/i, "เก็บเงินปลายทาง (COD)", true], [/promptpay|พร้อมเพย์/i, "QR PromptPay", true], [/spaylater|ผ่อน/i, "ผ่อนชำระ", false], [/โอน|banking|ธนาคาร/i, "โอนผ่านธนาคาร", false]];
+  const normPay = (txt, strongOnly) => { const hit = payKeys.find(([re, , strong]) => (!strongOnly || strong) && re.test(txt)); return hit ? hit[1] : ""; };
+  let payment = "";
+  const payIdx = nl.findIndex((l) => /วิธีการชำระเงิน/.test(l));
+  if (payIdx >= 0) {
+    for (let k = payIdx; k <= Math.min(nl.length - 1, payIdx + 2) && !payment; k++) {
+      const txt = (k === payIdx ? nl[k].replace(/วิธีการชำระเงิน/, "") : nl[k]).trim();
+      if (!txt) continue;
+      payment = normPay(txt, false) || (txt.length <= 40 && !/\d{3,}/.test(txt) ? txt : "");
+    }
+  }
+  if (!payment) payment = normPay(orig, true);
+  return { gross, net, fee, qty, orderNo, date, orderAt, customer, payment, productId, cands, scanName, platformId: pl ? pl.id : "" };
 }
 function ProductPicker({ products, value, onChange }) {
   const [open, setOpen] = useState(false);
@@ -658,6 +675,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
   const [feeTouched, setFeeTouched] = useState(!!initial);
   const [orderNo, setOrderNo] = useState(initial?.orderNo || "");
   const [customer, setCustomer] = useState(initial?.customer || "");
+  const [payment, setPayment] = useState(initial?.payment || "");
   const [orderAt, setOrderAt] = useState(initial?.orderAt ? bkkDate(initial.orderAt) + "T" + hm(initial.orderAt) : "");
   const [time, setTime] = useState(initial ? fmtTime(initial.date) : hm(/* @__PURE__ */ new Date()));
   const [scanMsg, setScanMsg] = useState("");
@@ -679,10 +697,13 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       if (r.gross != null) setPrice(String(Math.round(r.gross / (r.qty || 1) * 100) / 100));
       if (r.platformId) setPlatformId(r.platformId);
       if (r.fee != null) { setFeeIn({ mode: "baht", value: String(r.fee) }); setFeeTouched(true); }
-      if (r.date) setDate(r.date);
+      const orderDay = r.orderAt ? r.orderAt.slice(0, 10) : "";
+      const numDay = r.date && r.date <= todayStr() ? r.date : "";
+      if (orderDay || numDay) setDate(orderDay || numDay);
       if (r.orderNo) setOrderNo(r.orderNo);
       if (r.orderAt) setOrderAt(r.orderAt);
       if (r.customer && !customer.trim()) setCustomer(r.customer);
+      if (r.payment) setPayment(r.payment);
       const miss = [!r.productId && "สินค้า", r.gross == null && "ราคา", r.fee == null && "ค่าธรรมเนียม", !r.platformId && "Platform"].filter(Boolean);
       const dup = r.orderNo && (sales || []).some((x) => x.orderNo === r.orderNo);
       setScanMsg((dup ? "⚠ ออเดอร์นี้เคยบันทึกแล้ว! " : "") + "อ่านรูปเสร็จ กรุณาตรวจค่าให้ถูกต้องก่อนบันทึก" + (miss.length ? " (อ่านไม่ได้: " + miss.join(", ") + ")" : "") + (!r.productId && r.scanName ? " — เลือกสินค้าเอง ระบบจะจำชื่อ \"" + r.scanName + "\" ไว้ให้ครั้งต่อไป" : ""));
@@ -716,6 +737,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
   }
   function submit() {
     if (!canSubmit) return;
+    if (date > todayStr() && !window.confirm("วันที่ " + date + " เป็นวันในอนาคต (วันนี้คือ " + todayStr() + ")\nยืนยันบันทึกไหม?")) return;
     if (scanInfo && scanInfo.name && scanInfo.guess !== productId && onLearn) onLearn(productId, scanInfo.name);
     setScanInfo(null);
     const oid = initial ? initial.orderId : uid();
@@ -728,6 +750,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       orderId: oid,
       orderNo: orderNo.trim() || void 0,
       customer: customer.trim() || void 0,
+      payment: payment.trim() || void 0,
       orderAt: orderAt ? (/* @__PURE__ */ new Date(orderAt + ":00+07:00")).toISOString() : void 0,
       createdAt: initial ? initial.createdAt : (/* @__PURE__ */ new Date()).toISOString(),
       productId: l.productId,
@@ -742,7 +765,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
     }));
     setItems([{ productId: "", quantity: 1, price: "" }]); setPlatformId(""); setCoupon(0);
     setFeeIn({ mode: "pct", value: "0" }); setOtherIn({ mode: "baht", value: "" });
-    setOrderNo(""); setCustomer(""); setOrderAt("");
+    setOrderNo(""); setCustomer(""); setOrderAt(""); setPayment("");
     setFeeTouched(false); setDate(todayStr()); setTime(hm(/* @__PURE__ */ new Date()));
   }
   const num = (props) => React.createElement("input", { type: "number", min: "0", step: "any", inputMode: "decimal", ...props });
@@ -783,6 +806,10 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
           React.createElement("input", { type: "date", value: date, onChange: (e) => setDate(e.target.value) })),
         React.createElement("label", { className: "field" }, React.createElement("span", null, "เวลาที่บันทึก"),
           React.createElement("input", { type: "time", value: time, onChange: (e) => setTime(e.target.value) }))),
+      date > todayStr() && React.createElement("div", { style: { fontSize: 12.5, color: "#B42318", fontWeight: 600 } }, "⚠ วันที่นี้เป็นวันในอนาคต (วันนี้คือ " + todayStr() + ") ตรวจก่อนบันทึก"),
+      React.createElement("label", { className: "field" }, React.createElement("span", null, "วิธีการชำระเงิน (ไม่บังคับ)"),
+        React.createElement("input", { list: "payment-methods", value: payment, placeholder: "เช่น บัตรเครดิต/บัตรเดบิต, ShopeePay", onChange: (e) => setPayment(e.target.value) })),
+      React.createElement("datalist", { id: "payment-methods" }, [...new Set([...PAY_DEFAULTS, ...(sales || []).map((x) => x.payment).filter(Boolean)])].map((n) => React.createElement("option", { key: n, value: n }))),
       React.createElement("label", { className: "field" }, React.createElement("span", null, "เลขออเดอร์ (ไม่บังคับ)"),
         React.createElement("input", { value: orderNo, onChange: (e) => setOrderNo(e.target.value) })),
       React.createElement("label", { className: "field" }, React.createElement("span", null, "วันที่-เวลาสั่งซื้อ ตามแพลตฟอร์ม (ไม่บังคับ)"),
@@ -1047,7 +1074,7 @@ function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hay = (s) => {
     const p = productMap[s.productId] || {}, pl = platformMap[s.platformId] || {};
-    return [s.orderNo, s.customer, p.name, p.sku, p.aliases, pl.name, bkkDate(s.date), fmtBkkDate(s.date), s.orderAt ? bkkDate(s.orderAt) : "", s.price, (s.price || 0) * (s.quantity || 0), s.status === "cancelled" ? "ยกเลิก" : s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : ""].join(" ").toLowerCase();
+    return [s.orderNo, s.customer, s.payment, p.name, p.sku, p.aliases, pl.name, bkkDate(s.date), fmtBkkDate(s.date), s.orderAt ? bkkDate(s.orderAt) : "", s.price, (s.price || 0) * (s.quantity || 0), s.status === "cancelled" ? "ยกเลิก" : s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : ""].join(" ").toLowerCase();
   };
   const hit = new Set(terms.length ? rows.filter((s) => { const h = hay(s); return terms.every((t) => h.includes(t)); }).map((s) => s.orderId || s.id) : []);
   const shown = terms.length ? rows.filter((s) => hit.has(s.orderId || s.id)) : rows;
@@ -1065,7 +1092,7 @@ function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }
         React.createElement("span", { className: "tx-dot", style: { background: pl?.color || "#999" } }),
         React.createElement("div", { className: "tx-info" },
           React.createElement("div", { className: "tx-name", style: { whiteSpace: "normal", wordBreak: "break-word" } }, p?.name || "สินค้าไม่พบ"),
-          React.createElement("div", { className: "tx-sub" }, pl?.name, " · ", fmtBkkDate(s.date), fmtTime(s.date) ? " " + fmtTime(s.date) : "", " · x", s.quantity, s.orderNo ? " · #" + s.orderNo : "", s.customer ? " · 👤 " + s.customer : "", s.orderAt ? " · สั่ง " + fmtBkkDate(s.orderAt) + " " + hm(s.orderAt) : "", sizes[s.orderId] > 1 ? " · ออเดอร์ " + sizes[s.orderId] + " รายการ" : "")),
+          React.createElement("div", { className: "tx-sub" }, pl?.name, " · ", fmtBkkDate(s.date), fmtTime(s.date) ? " " + fmtTime(s.date) : "", " · x", s.quantity, s.orderNo ? " · #" + s.orderNo : "", s.customer ? " · 👤 " + s.customer : "", s.payment ? " · 💳 " + s.payment : "", s.orderAt ? " · สั่ง " + fmtBkkDate(s.orderAt) + " " + hm(s.orderAt) : "", sizes[s.orderId] > 1 ? " · ออเดอร์ " + sizes[s.orderId] + " รายการ" : "")),
         React.createElement("div", { className: "tx-figures" },
           React.createElement("div", { className: "tx-gross", style: s.status ? { color: s.status === "cancelled" ? "#68706B" : "#B42318", fontSize: 12 } : void 0 }, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : s.status === "cancelled" ? "ยกเลิก" : fmtCurrency(m.gross)),
           React.createElement("div", { className: "tx-profit", style: s.status ? { color: s.status === "cancelled" && !(s.lossExtra > 0) ? "#68706B" : "#B42318" } : void 0 }, s.status === "cancelled" && !(s.lossExtra > 0) ? "ไม่นับยอด" : s.status ? "ขาดทุน " + fmtCurrency(-m.profit) : "กำไร " + fmtCurrency(m.profit))),
@@ -1225,10 +1252,10 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
   const salesTable = () => {
     const pm = Object.fromEntries(products.map((p) => [p.id, p]));
     const plm = Object.fromEntries(platforms.map((p) => [p.id, p]));
-    const head = ["วันที่", "สินค้า", "SKU", "แพลตฟอร์ม", "จำนวน", "ราคา/ชิ้น", "ยอดขาย", "คูปอง", "ค่าธรรมเนียม", "รายจ่ายอื่นๆ", "ต้นทุน", "กำไร", "สถานะ", "เวลา", "ลูกค้า", "เลขออเดอร์", "สั่งซื้อตามแพลตฟอร์ม"];
+    const head = ["วันที่", "สินค้า", "SKU", "แพลตฟอร์ม", "จำนวน", "ราคา/ชิ้น", "ยอดขาย", "คูปอง", "ค่าธรรมเนียม", "รายจ่ายอื่นๆ", "ต้นทุน", "กำไร", "สถานะ", "เวลา", "ลูกค้า", "เลขออเดอร์", "สั่งซื้อตามแพลตฟอร์ม", "วิธีชำระเงิน"];
     const rows = [...sales].sort((a, b) => new Date(a.date) - new Date(b.date)).map((s) => {
       const m = computeSaleMetrics(s, pm[s.productId], plm[s.platformId]);
-      return [ymd(s.date), pm[s.productId]?.name || "", pm[s.productId]?.sku || "", plm[s.platformId]?.name || "", s.quantity, s.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : s.status === "cancelled" ? "ยกเลิก" : "ปกติ", fmtTime(s.date), s.customer || "", s.orderNo || "", s.orderAt ? bkkDate(s.orderAt) + " " + hm(s.orderAt) : ""];
+      return [ymd(s.date), pm[s.productId]?.name || "", pm[s.productId]?.sku || "", plm[s.platformId]?.name || "", s.quantity, s.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : s.status === "cancelled" ? "ยกเลิก" : "ปกติ", fmtTime(s.date), s.customer || "", s.orderNo || "", s.orderAt ? bkkDate(s.orderAt) + " " + hm(s.orderAt) : "", s.payment || ""];
     });
     return [head, ...rows];
   };
@@ -1618,6 +1645,103 @@ function ProductsPage({ products, sales, onSave, onDelete, onMerge }) {
     showForm && React.createElement(ProductForm, { initial: editing, products, onClose: () => setShowForm(false), onSave: (p) => { onSave(p); setShowForm(false); } }),
     merging && React.createElement(MergeModal, { group: merging, sales, onClose: () => setMerging(null), onConfirm: (keepId) => { onMerge(keepId, merging.filter((p) => p.id !== keepId).map((p) => p.id)); setMerging(null); } }));
 }
+const PAY_DEFAULTS = ["บัตรเครดิต/บัตรเดบิต", "ShopeePay", "QR PromptPay", "โอนผ่านธนาคาร", "เก็บเงินปลายทาง (COD)", "ผ่อนชำระ", "เงินสด"];
+const PAY_COLORS = ["#173D35", "#B8862F", "#EE4D2D", "#1877F2", "#06C755", "#8E44AD", "#16A085", "#E67E22"];
+function PurchaseTimeChart({ sales }) {
+  const [mode, setMode] = useState("hour");
+  const [metric, setMetric] = useState("orders");
+  const info = useMemo(() => {
+    const hours = Array.from({ length: 24 }, (_, h) => ({ label: String(h).padStart(2, "0"), orders: 0, gross: 0 }));
+    const days = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"].map((label) => ({ label, orders: 0, gross: 0 }));
+    const seen = new Set();
+    let total = 0, real = 0;
+    sales.forEach((s) => {
+      if (s.status) return;
+      const p = bkkParts(s.orderAt || s.date);
+      const h = parseInt(p.hour, 10) % 24;
+      const wd = new Date(Date.UTC(+p.year, +p.month - 1, +p.day)).getUTCDay();
+      const gross = (s.price || 0) * (s.quantity || 0);
+      hours[h].gross += gross;
+      days[wd].gross += gross;
+      const key = s.orderId || s.id;
+      if (!seen.has(key)) {
+        seen.add(key);
+        hours[h].orders += 1;
+        days[wd].orders += 1;
+        total += 1;
+        if (s.orderAt) real += 1;
+      }
+    });
+    return { hours, days, total, real };
+  }, [sales]);
+  const fullDays = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
+  const data = mode === "hour" ? info.hours : info.days;
+  const val = (d) => d[metric];
+  const max = Math.max(0, ...data.map(val));
+  const bestIdx = max > 0 ? data.findIndex((d) => val(d) === max) : -1;
+  const fmtVal = (v) => metric === "orders" ? fmtNumber(v) + " ออเดอร์" : fmtCurrency(v);
+  const bestText = bestIdx < 0 ? "" : mode === "hour" ? "ซื้อมากสุดช่วง " + data[bestIdx].label + ":00-" + data[bestIdx].label + ":59 (" + fmtVal(max) + ")" : "ซื้อมากสุดวัน" + fullDays[bestIdx] + " (" + fmtVal(max) + ")";
+  const groups = [["ดึก 00-05", 0, 5], ["เช้า 06-11", 6, 11], ["บ่าย 12-17", 12, 17], ["ค่ำ 18-23", 18, 23]].map(([name, a, b]) => ({ name, v: info.hours.slice(a, b + 1).reduce((x, h) => x + h[metric], 0) }));
+  const gTotal = groups.reduce((a, g) => a + g.v, 0);
+  const tg = (cur, set, id, label) => React.createElement("button", { key: id, className: "toggle toggle-sm" + (cur === id ? " active" : ""), onClick: () => set(id) }, label);
+  return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
+    React.createElement("div", { className: "section-head" },
+      React.createElement("div", { className: "section-title" }, "ช่วงเวลาที่ลูกค้าซื้อ"),
+      React.createElement("div", { className: "chart-controls" },
+        React.createElement("div", { className: "toggle-group" }, tg(mode, setMode, "hour", "ชั่วโมง"), tg(mode, setMode, "weekday", "วัน")),
+        React.createElement("div", { className: "toggle-group" }, tg(metric, setMetric, "orders", "ออเดอร์"), tg(metric, setMetric, "gross", "ยอดขาย")))),
+    info.total === 0 ? React.createElement("div", { className: "mini-empty" }, "ยังไม่มีข้อมูลในช่วงนี้") : React.createElement("div", null,
+      React.createElement("div", { style: { fontSize: 13, fontWeight: 600, marginBottom: 6 } }, bestText),
+      React.createElement("div", { className: "chart-wrap" }, React.createElement(ResponsiveContainer, { width: "100%", height: 200 },
+        React.createElement(BarChart, { data, margin: { top: 8, right: 8, left: 0, bottom: 0 } },
+          React.createElement(CartesianGrid, { strokeDasharray: "3 5", vertical: false, stroke: "#E3E6E2" }),
+          React.createElement(XAxis, { dataKey: "label", tick: { fontSize: 11, fill: "#68706B" }, axisLine: false, tickLine: false, interval: mode === "hour" ? 2 : 0 }),
+          React.createElement(YAxis, { tick: { fontSize: 11, fill: "#68706B" }, axisLine: false, tickLine: false, width: 40, allowDecimals: false, tickFormatter: (v) => metric === "gross" && v >= 1e3 ? (v / 1e3).toFixed(0) + "k" : v }),
+          React.createElement(Tooltip, { formatter: (v) => fmtVal(v), labelFormatter: (l) => mode === "hour" ? l + ":00-" + l + ":59" : "วัน" + (fullDays[data.findIndex((d) => d.label === l)] || l), contentStyle: { borderRadius: 12, border: "1px solid #E3E6E2", fontSize: 12, boxShadow: "0 8px 24px rgba(15,43,38,0.12)" }, cursor: { fill: "rgba(15,43,38,0.06)" } }),
+          React.createElement(Bar, { dataKey: metric, radius: [4, 4, 0, 0] }, data.map((d, i) => React.createElement(Cell, { key: d.label, fill: i === bestIdx ? "#B8862F" : "#173D35" })))))),
+      mode === "hour" && gTotal > 0 && React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 } }, groups.map((g) => React.createElement("div", { key: g.name, style: { background: "#F6F7F5", borderRadius: 10, padding: "8px 10px" } },
+        React.createElement("div", { style: { fontSize: 11.5, color: "#68706B" } }, g.name),
+        React.createElement("div", { style: { fontSize: 14, fontWeight: 700 } }, fmtVal(g.v)),
+        React.createElement("div", { style: { fontSize: 11.5, color: "#68706B" } }, Math.round(g.v / gTotal * 1000) / 10 + "%")))),
+      React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 10 } }, "นับตามเวลาสั่งซื้อจริงจากแพลตฟอร์ม " + info.real + " จาก " + info.total + " ออเดอร์ ที่เหลือใช้เวลาที่บันทึก (สแกนรูปออเดอร์หรือกรอกวันที่-เวลาสั่งซื้อเพื่อให้แม่นขึ้น)")));
+}
+function PaymentMethodChart({ sales }) {
+  const [metric, setMetric] = useState("orders");
+  const rows = useMemo(() => {
+    const map = Object.create(null), seen = new Set();
+    sales.forEach((s) => {
+      if (s.status) return;
+      const name = String(s.payment || "").trim() || "ไม่ระบุ";
+      const k = name.toLowerCase();
+      const r = map[k] || (map[k] = { name, orders: 0, gross: 0 });
+      r.gross += (s.price || 0) * (s.quantity || 0);
+      const key = s.orderId || s.id;
+      if (!seen.has(key)) { seen.add(key); r.orders += 1; }
+    });
+    return Object.values(map);
+  }, [sales]);
+  const list = [...rows].sort((a, b) => (a.name === "ไม่ระบุ") - (b.name === "ไม่ระบุ") || b[metric] - a[metric]);
+  const total = list.reduce((a, r) => a + r[metric], 0);
+  const colorOf = (r, i) => r.name === "ไม่ระบุ" ? "#C9CEC9" : PAY_COLORS[i % PAY_COLORS.length];
+  const fmtVal = (v) => metric === "orders" ? fmtNumber(v) + " ออเดอร์" : fmtCurrency(v);
+  const tg = (id, label) => React.createElement("button", { key: id, className: "toggle toggle-sm" + (metric === id ? " active" : ""), onClick: () => setMetric(id) }, label);
+  return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
+    React.createElement("div", { className: "section-head" },
+      React.createElement("div", { className: "section-title" }, "วิธีการชำระเงิน"),
+      React.createElement("div", { className: "toggle-group" }, tg("orders", "ออเดอร์"), tg("gross", "ยอดขาย"))),
+    list.length === 0 || total === 0 ? React.createElement("div", { className: "mini-empty" }, "ยังไม่มีข้อมูลในช่วงนี้") : React.createElement("div", null,
+      React.createElement("div", { className: "chart-wrap" }, React.createElement(ResponsiveContainer, { width: "100%", height: 200 },
+        React.createElement(PieChart, null,
+          React.createElement(Tooltip, { formatter: (v) => fmtVal(v), contentStyle: { borderRadius: 12, border: "1px solid #E3E6E2", fontSize: 12 } }),
+          React.createElement(Pie, { data: list, dataKey: metric, nameKey: "name", innerRadius: 52, outerRadius: 82, paddingAngle: 2, stroke: "none" }, list.map((r, i) => React.createElement(Cell, { key: r.name, fill: colorOf(r, i) })))))),
+      list.map((r, i) => React.createElement("div", { key: r.name, style: { display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 13.5 } },
+        React.createElement("span", { style: { width: 10, height: 10, borderRadius: 5, background: colorOf(r, i), flexShrink: 0 } }),
+        React.createElement("span", { style: { flex: 1, minWidth: 0, wordBreak: "break-word" } }, r.name),
+        React.createElement("span", { style: { color: "#68706B", fontSize: 12 } }, metric === "orders" ? fmtCurrency(r.gross) : fmtNumber(r.orders) + " ออเดอร์"),
+        React.createElement("span", { style: { fontWeight: 700, minWidth: 92, textAlign: "right" } }, fmtVal(r[metric]) + " · " + Math.round(r[metric] / total * 1000) / 10 + "%"))),
+      list.length === 1 && list[0].name === "ไม่ระบุ" && React.createElement("div", { style: { fontSize: 12, color: "#B8862F", marginTop: 8 } }, "ยังไม่มีข้อมูลวิธีชำระเงิน เลือกในช่องวิธีการชำระเงินตอนบันทึกการขาย หรือสแกนรูปออเดอร์ให้อ่านให้"),
+      React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "รายการเก่าที่บันทึกก่อนมีช่องนี้จะอยู่ในกลุ่ม ไม่ระบุ")));
+}
 function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) {
   const { preset, customRange } = dateState;
   const { start, end } = getRange(preset, customRange.start, customRange.end);
@@ -1664,7 +1788,7 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
         style: { width: Math.max(margin, 2) + "%" }
       }
     )), /* @__PURE__ */ React.createElement("div", { className: "margin-pct" }, margin.toFixed(1), "%"));
-  }))), /* @__PURE__ */ React.createElement(PlatformFeeReport, { sales, products, platforms }), /* @__PURE__ */ React.createElement(CustomerStats, { sales, products }));
+  }))), React.createElement(PurchaseTimeChart, { sales: filteredSales }), React.createElement(PaymentMethodChart, { sales: filteredSales }), /* @__PURE__ */ React.createElement(PlatformFeeReport, { sales, products, platforms }), /* @__PURE__ */ React.createElement(CustomerStats, { sales, products }));
 }
 function PlatformFeeReport({ sales, products, platforms }) {
   const pad = (n) => String(n).padStart(2, "0");
@@ -1925,7 +2049,7 @@ function App() {
   function handleEditSale(u) {
     const old = sales.find((x) => x.id === u.id);
     if (!old) return;
-    setSales((prev) => prev.map((x) => x.id === u.id ? { ...u, paidDate: x.paidDate, paidAmount: x.paidAmount } : u.orderId && x.orderId === u.orderId ? { ...x, customer: u.customer, orderNo: u.orderNo } : x));
+    setSales((prev) => prev.map((x) => x.id === u.id ? { ...u, paidDate: x.paidDate, paidAmount: x.paidAmount } : u.orderId && x.orderId === u.orderId ? { ...x, customer: u.customer, orderNo: u.orderNo, payment: u.payment } : x));
     setProducts((prev) => prev.map((p) => {
       let st = p.stock;
       if (p.id === old.productId) st += old.quantity;
