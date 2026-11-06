@@ -699,7 +699,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       if (r.fee != null) { setFeeIn({ mode: "baht", value: String(r.fee) }); setFeeTouched(true); }
       const orderDay = r.orderAt ? r.orderAt.slice(0, 10) : "";
       const numDay = r.date && r.date <= todayStr() ? r.date : "";
-      if (orderDay || numDay) setDate(orderDay || numDay);
+      if (orderDay || numDay) { setDate(orderDay || numDay); setDateTouched(true); }
       if (r.orderNo) setOrderNo(r.orderNo);
       if (r.orderAt) setOrderAt(r.orderAt);
       if (r.customer && !customer.trim()) setCustomer(r.customer);
@@ -710,6 +710,20 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
     } catch (err) { setScanMsg("อ่านรูปไม่สำเร็จ (ต้องต่ออินเทอร์เน็ตในครั้งแรก) กรอกเองได้เลย"); }
   }
   const [date, setDate] = useState(initial ? bkkDate(initial.date) : todayStr());
+  const [dateTouched, setDateTouched] = useState(false);
+  const [timeTouched, setTimeTouched] = useState(false);
+  const [savedMsg, setSavedMsg] = useState("");
+  useEffect(() => {
+    if (initial) return;
+    const tick = () => {
+      if (!dateTouched) setDate(todayStr());
+      if (!timeTouched) setTime(hm(/* @__PURE__ */ new Date()));
+    };
+    tick();
+    const id = setInterval(tick, 15000);
+    document.addEventListener("visibilitychange", tick);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", tick); };
+  }, [initial, dateTouched, timeTouched]);
   const lines = items.map((it) => ({ ...it, product: products.find((p) => p.id === it.productId), g: (parseFloat(it.price) || 0) * (parseFloat(it.quantity) || 0) }));
   const gross = lines.reduce((a, l) => a + l.g, 0);
   function resolve(inp) {
@@ -727,6 +741,8 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
   })();
   const cost = lines.reduce((a, l) => a + (l.product?.cost || 0) * (parseFloat(l.quantity) || 0), 0);
   const profit = gross - couponNum - fee.baht - other.baht - cost;
+  const dupCount = orderNo.trim() ? new Set((sales || []).filter((x) => String(x.orderNo || "").toUpperCase() === orderNo.trim().toUpperCase() && !(initial && x.orderId === initial.orderId)).map((x) => x.orderId || x.id)).size : 0;
+  const dupWarn = dupCount ? "⚠ เลขออเดอร์นี้ถูกบันทึกไปแล้ว " + dupCount + " ครั้ง ถ้าบันทึกอีกจะถูกนับซ้ำ" : "";
   const canSubmit = platformId && lines.every((l) => l.productId && parseFloat(l.price) > 0 && parseFloat(l.quantity) > 0);
   function handlePlatformChange(id) {
     setPlatformId(id);
@@ -737,14 +753,17 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
   }
   function submit() {
     if (!canSubmit) return;
-    if (date > todayStr() && !window.confirm("วันที่ " + date + " เป็นวันในอนาคต (วันนี้คือ " + todayStr() + ")\nยืนยันบันทึกไหม?")) return;
+    const useDate = initial || dateTouched ? date : todayStr();
+    const useTime = initial || timeTouched ? time : hm(/* @__PURE__ */ new Date());
+    if (useDate > todayStr() && !window.confirm("วันที่ " + useDate + " เป็นวันในอนาคต (วันนี้คือ " + todayStr() + ")\nยืนยันบันทึกไหม?")) return;
+    if (dupCount > 0 && !window.confirm("เลขออเดอร์ " + orderNo.trim() + " ถูกบันทึกไปแล้ว " + dupCount + " ครั้ง\nบันทึกซ้ำอีกไหม?")) return;
     if (scanInfo && scanInfo.name && scanInfo.guess !== productId && onLearn) onLearn(productId, scanInfo.name);
     setScanInfo(null);
     const oid = initial ? initial.orderId : uid();
     const n = lines.length;
     const alloc = (total) => { let rest = r2(total); return lines.map((l, i) => { const v = i === n - 1 ? rest : r2(gross > 0 ? total * l.g / gross : total / n); rest = r2(rest - v); return v; }); };
     const cs = alloc(couponNum), fs = alloc(fee.baht), os = alloc(other.baht);
-    const dateIso = (time ? new Date(date + "T" + time + ":00+07:00") : new Date(date)).toISOString();
+    const dateIso = (useTime ? new Date(useDate + "T" + useTime + ":00+07:00") : new Date(useDate)).toISOString();
     lines.forEach((l, i) => onSubmit({
       id: i === 0 && initial ? initial.id : uid(),
       orderId: oid,
@@ -763,10 +782,14 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       unitCost: initial && initial.productId === l.productId ? initial.unitCost ?? (l.product?.cost || 0) : l.product?.cost || 0,
       date: dateIso
     }));
+    if (!initial) {
+      setSavedMsg("บันทึกแล้ว ✓ " + (lines.length > 1 ? lines.length + " รายการ" : lines[0].product?.name || "") + " · " + fmtCurrency(gross) + " · " + useDate + " " + useTime);
+      setTimeout(() => setSavedMsg(""), 8000);
+    }
     setItems([{ productId: "", quantity: 1, price: "" }]); setPlatformId(""); setCoupon(0);
     setFeeIn({ mode: "pct", value: "0" }); setOtherIn({ mode: "baht", value: "" });
     setOrderNo(""); setCustomer(""); setOrderAt(""); setPayment("");
-    setFeeTouched(false); setDate(todayStr()); setTime(hm(/* @__PURE__ */ new Date()));
+    setFeeTouched(false); setDate(todayStr()); setTime(hm(/* @__PURE__ */ new Date())); setDateTouched(false); setTimeTouched(false);
   }
   const num = (props) => React.createElement("input", { type: "number", min: "0", step: "any", inputMode: "decimal", ...props });
   const amountPair = (label, inp, setInp, calc, touch) => React.createElement("div", { className: "field-row" },
@@ -803,15 +826,16 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       amountPair("รายจ่ายอื่นๆ", otherIn, setOtherIn, other, null),
       React.createElement("div", { className: "field-row" },
         React.createElement("label", { className: "field" }, React.createElement("span", null, "วันที่"),
-          React.createElement("input", { type: "date", value: date, onChange: (e) => setDate(e.target.value) })),
+          React.createElement("input", { type: "date", value: date, onChange: (e) => { setDate(e.target.value); setDateTouched(true); } })),
         React.createElement("label", { className: "field" }, React.createElement("span", null, "เวลาที่บันทึก"),
-          React.createElement("input", { type: "time", value: time, onChange: (e) => setTime(e.target.value) }))),
+          React.createElement("input", { type: "time", value: time, onChange: (e) => { setTime(e.target.value); setTimeTouched(true); } }))),
       date > todayStr() && React.createElement("div", { style: { fontSize: 12.5, color: "#B42318", fontWeight: 600 } }, "⚠ วันที่นี้เป็นวันในอนาคต (วันนี้คือ " + todayStr() + ") ตรวจก่อนบันทึก"),
       React.createElement("label", { className: "field" }, React.createElement("span", null, "วิธีการชำระเงิน (ไม่บังคับ)"),
         React.createElement("input", { list: "payment-methods", value: payment, placeholder: "เช่น บัตรเครดิต/บัตรเดบิต, ShopeePay", onChange: (e) => setPayment(e.target.value) })),
       React.createElement("datalist", { id: "payment-methods" }, [...new Set([...PAY_DEFAULTS, ...(sales || []).map((x) => x.payment).filter(Boolean)])].map((n) => React.createElement("option", { key: n, value: n }))),
       React.createElement("label", { className: "field" }, React.createElement("span", null, "เลขออเดอร์ (ไม่บังคับ)"),
         React.createElement("input", { value: orderNo, onChange: (e) => setOrderNo(e.target.value) })),
+      dupWarn && React.createElement("div", { style: { fontSize: 12.5, color: "#B42318", fontWeight: 600 } }, dupWarn),
       React.createElement("label", { className: "field" }, React.createElement("span", null, "วันที่-เวลาสั่งซื้อ ตามแพลตฟอร์ม (ไม่บังคับ)"),
         React.createElement("input", { type: "datetime-local", value: orderAt, onChange: (e) => setOrderAt(e.target.value) })),
       React.createElement("label", { className: "field" }, React.createElement("span", null, "ชื่อ / ID ลูกค้า (ไม่บังคับ)"),
@@ -826,6 +850,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       row("คูปอง", "-" + fmtCurrency(couponNum)),
       row("ต้นทุน", "-" + fmtCurrency(cost)),
       row("กำไร" + (gross > 0 ? pctTxt(profit / gross * 100) : ""), fmtCurrency(profit), "ls-profit")),
+    savedMsg && React.createElement("div", { style: { background: "#E7F2EC", color: "#1A7F4B", borderRadius: 10, padding: "8px 12px", fontSize: 13, fontWeight: 600, marginBottom: 8 } }, savedMsg),
     React.createElement("button", { className: "btn btn-primary btn-block", disabled: !canSubmit, onClick: submit }, React.createElement(Check, { size: 16 }), " บันทึกการขาย"), onCancel && React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: onCancel }, "ยกเลิก"));
 }
 const r2g = (n) => Math.round((n || 0) * 100) / 100;
@@ -1060,17 +1085,63 @@ function StatusModal({ sale, productName, orderCount, onClose, onSave }) {
     React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 14 }, onClick: save }, "บันทึกสถานะ"),
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: onClose }, "ยกเลิก"))));
 }
+function findDuplicateOrders(sales) {
+  const byNo = Object.create(null);
+  sales.forEach((s) => {
+    const no = String(s.orderNo || "").trim().toUpperCase();
+    if (!no) return;
+    const g = byNo[no] || (byNo[no] = Object.create(null));
+    const key = s.orderId || s.id;
+    (g[key] || (g[key] = { key, rows: [], at: new Date(s.createdAt || s.date).getTime() })).rows.push(s);
+  });
+  const groups = [];
+  Object.keys(byNo).forEach((no) => {
+    const saves = Object.values(byNo[no]).filter((sv) => sv.rows.every((r) => !r.status));
+    if (saves.length < 2) return;
+    const bySig = Object.create(null);
+    saves.forEach((sv) => {
+      const sig = sv.rows.map((r) => r.productId + "|" + r.quantity + "|" + r.price).sort().join(";");
+      (bySig[sig] || (bySig[sig] = [])).push(sv);
+    });
+    Object.values(bySig).forEach((list) => {
+      if (list.length < 2) return;
+      const sorted = [...list].sort((a, b) => a.at - b.at);
+      groups.push({ no, customer: sorted[0].rows[0].customer || "", keep: sorted[0], extras: sorted.slice(1) });
+    });
+  });
+  return groups;
+}
+function DuplicateOrdersModal({ groups, pm, onClose, onConfirm }) {
+  const when = (sv) => fmtBkkDate(sv.rows[0].date) + (fmtTime(sv.rows[0].date) ? " " + fmtTime(sv.rows[0].date) : "");
+  const names = (sv) => sv.rows.map((r) => (pm[r.productId] || {}).name || "สินค้าไม่พบ").join(", ");
+  const total = groups.reduce((a, g) => a + g.extras.reduce((b, sv) => b + sv.rows.length, 0), 0);
+  return React.createElement("div", { className: "modal-overlay", onClick: onClose }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+    React.createElement("div", { className: "modal-head" },
+      React.createElement("div", { className: "modal-title" }, "ออเดอร์ที่บันทึกซ้ำ"),
+      React.createElement("button", { type: "button", className: "icon-btn", onClick: onClose }, React.createElement(X, { size: 18 }))),
+    React.createElement("div", { style: { fontSize: 12.5, color: "#68706B", marginBottom: 10 } }, "ออเดอร์เหล่านี้มีเลขออเดอร์ สินค้า จำนวน และราคาเหมือนกันทุกอย่าง จะเก็บรายการที่บันทึกก่อนไว้ ลบที่เหลือ และคืนสต็อกให้"),
+    groups.map((g, i) => React.createElement("div", { key: g.no + i, style: { borderTop: "1px solid #EEF0ED", padding: "8px 0" } },
+      React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, wordBreak: "break-word" } }, "#" + g.no + (g.customer ? " · " + g.customer : "")),
+      React.createElement("div", { style: { fontSize: 12.5, color: "#68706B", wordBreak: "break-word" } }, names(g.keep)),
+      React.createElement("div", { style: { fontSize: 12.5, color: "#1A7F4B" } }, "เก็บไว้: บันทึกเมื่อ " + when(g.keep)),
+      React.createElement("div", { style: { fontSize: 12.5, color: "#B42318" } }, "ลบ " + g.extras.length + " รายการ: " + g.extras.map(when).join(", ")))),
+    React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 12 }, onClick: onConfirm }, "ลบรายการซ้ำทั้งหมด (" + total + " รายการ)"),
+    React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: onClose }, "ยกเลิก")));
+}
 function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }) {
   const [limit, setLimit] = useState(20);
   const [statusFor, setStatusFor] = useState(null);
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null);
+  const [showDup, setShowDup] = useState(false);
   const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
   const platformMap = Object.fromEntries(platforms.map((p) => [p.id, p]));
   const rows = [...sales].sort((a, b) => new Date(b.date) - new Date(a.date));
   const sizes = {};
   sales.forEach((x) => { if (x.orderId) sizes[x.orderId] = (sizes[x.orderId] || 0) + 1; });
   if (rows.length === 0) return null;
+  const dupGroups = findDuplicateOrders(sales);
+  const dupExtra = dupGroups.reduce((a, g) => a + g.extras.length, 0);
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hay = (s) => {
     const p = productMap[s.productId] || {}, pl = platformMap[s.platformId] || {};
@@ -1083,6 +1154,7 @@ function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }
     React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10 } },
       React.createElement("input", { type: "search", value: q, placeholder: "ค้นหา เลขออเดอร์ / ชื่อสินค้า / แพลตฟอร์ม / วันที่ / ยอด", onChange: (e) => setQ(e.target.value), style: { flex: 1, minWidth: 0, padding: "10px 12px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
       q && React.createElement("button", { className: "btn btn-ghost", onClick: () => setQ("") }, "ล้าง")),
+    dupGroups.length > 0 && React.createElement("div", { className: "alert-card", style: { marginBottom: 10 }, onClick: () => setShowDup(true) }, React.createElement("div", { className: "alert-icon" }, React.createElement(AlertTriangle, { size: 18, strokeWidth: 2 })), React.createElement("div", { className: "alert-text" }, "พบออเดอร์ที่บันทึกซ้ำ " + dupGroups.length + " เลข (ซ้ำเกิน " + dupExtra + " รายการ) แตะเพื่อตรวจและลบ"), React.createElement(ChevronRight, { size: 16 })),
     terms.length > 0 && React.createElement("div", { style: { fontSize: 12.5, color: "#68706B", marginBottom: 8 } }, shown.length === 0 ? "ไม่พบรายการที่ตรงกับคำค้นหา" : "พบ " + shown.length + " รายการ (" + hit.size + " ออเดอร์)"),
     React.createElement("div", { className: "tx-list" }, shown.slice(0, terms.length ? 100 : limit).map((s) => {
       const p = productMap[s.productId];
@@ -1102,7 +1174,7 @@ function SalesHistory({ sales, products, platforms, onDelete, onEdit, onStatus }
           if (window.confirm("ลบรายการนี้? สต็อกสินค้าจะถูกคืนกลับ")) onDelete(s.id);
         } }, React.createElement(Trash2, { size: 14 })));
     })),
-    !terms.length && rows.length > limit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 12 }, onClick: () => setLimit(limit + 20) }, "แสดงเพิ่ม"), editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body" }, React.createElement(QuickSaleForm, { products, platforms, sales, initial: editing, onCancel: () => setEditing(null), onSubmit: (u) => { onEdit(u); setEditing(null); } })))), statusFor && React.createElement(StatusModal, { sale: statusFor, productName: (productMap[statusFor.productId] || {}).name || "", orderCount: statusFor.orderId ? sales.filter((x) => x.orderId === statusFor.orderId && x.status === statusFor.status).length : 1, onClose: () => setStatusFor(null), onSave: (patch, all) => { if (all) sales.filter((x) => x.orderId === statusFor.orderId && x.status === statusFor.status).forEach((x) => onStatus(x.id, patch)); else onStatus(statusFor.id, patch); setStatusFor(null); } }));
+    !terms.length && rows.length > limit && React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 12 }, onClick: () => setLimit(limit + 20) }, "แสดงเพิ่ม"), editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, React.createElement("div", { className: "modal-body" }, React.createElement(QuickSaleForm, { products, platforms, sales, initial: editing, onCancel: () => setEditing(null), onSubmit: (u) => { onEdit(u); setEditing(null); } })))), showDup && React.createElement(DuplicateOrdersModal, { groups: dupGroups, pm: productMap, onClose: () => setShowDup(false), onConfirm: () => { dupGroups.forEach((g) => g.extras.forEach((sv) => sv.rows.forEach((r) => onDelete(r.id)))); setShowDup(false); } }), statusFor && React.createElement(StatusModal, { sale: statusFor, productName: (productMap[statusFor.productId] || {}).name || "", orderCount: statusFor.orderId ? sales.filter((x) => x.orderId === statusFor.orderId && x.status === statusFor.status).length : 1, onClose: () => setStatusFor(null), onSave: (patch, all) => { if (all) sales.filter((x) => x.orderId === statusFor.orderId && x.status === statusFor.status).forEach((x) => onStatus(x.id, patch)); else onStatus(statusFor.id, patch); setStatusFor(null); } }));
 }
 function PlatformManager({ platforms, sales, onChange }) {
   const [editing, setEditing] = useState(null);
@@ -1647,22 +1719,30 @@ function ProductsPage({ products, sales, onSave, onDelete, onMerge }) {
 }
 const PAY_DEFAULTS = ["บัตรเครดิต/บัตรเดบิต", "ShopeePay", "QR PromptPay", "โอนผ่านธนาคาร", "เก็บเงินปลายทาง (COD)", "ผ่อนชำระ", "เงินสด"];
 const PAY_COLORS = ["#173D35", "#B8862F", "#EE4D2D", "#1877F2", "#06C755", "#8E44AD", "#16A085", "#E67E22"];
-function PurchaseTimeChart({ sales }) {
+function PurchaseTimeChart({ sales, products, platforms }) {
   const [mode, setMode] = useState("hour");
   const [metric, setMetric] = useState("orders");
+  const [platformId, setPlatformId] = useState("all");
+  const [realOnly, setRealOnly] = useState(false);
   const info = useMemo(() => {
-    const hours = Array.from({ length: 24 }, (_, h) => ({ label: String(h).padStart(2, "0"), orders: 0, gross: 0 }));
-    const days = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"].map((label) => ({ label, orders: 0, gross: 0 }));
+    const pm = Object.fromEntries(products.map((p) => [p.id, p]));
+    const plm = Object.fromEntries(platforms.map((p) => [p.id, p]));
+    const hours = Array.from({ length: 24 }, (_, h) => ({ label: String(h).padStart(2, "0"), orders: 0, gross: 0, profit: 0 }));
+    const days = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"].map((label) => ({ label, orders: 0, gross: 0, profit: 0 }));
     const seen = new Set();
     let total = 0, real = 0;
     sales.forEach((s) => {
       if (s.status) return;
+      if (platformId !== "all" && s.platformId !== platformId) return;
+      if (realOnly && !s.orderAt) return;
       const p = bkkParts(s.orderAt || s.date);
       const h = parseInt(p.hour, 10) % 24;
       const wd = new Date(Date.UTC(+p.year, +p.month - 1, +p.day)).getUTCDay();
-      const gross = (s.price || 0) * (s.quantity || 0);
-      hours[h].gross += gross;
-      days[wd].gross += gross;
+      const m = computeSaleMetrics(s, pm[s.productId], plm[s.platformId]);
+      hours[h].gross += m.gross;
+      days[wd].gross += m.gross;
+      hours[h].profit += m.profit;
+      days[wd].profit += m.profit;
       const key = s.orderId || s.id;
       if (!seen.has(key)) {
         seen.add(key);
@@ -1673,37 +1753,47 @@ function PurchaseTimeChart({ sales }) {
       }
     });
     return { hours, days, total, real };
-  }, [sales]);
+  }, [sales, products, platforms, platformId, realOnly]);
   const fullDays = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
+  const metricName = { orders: "ออเดอร์", gross: "ยอดขาย", profit: "กำไร" }[metric];
   const data = mode === "hour" ? info.hours : info.days;
   const val = (d) => d[metric];
   const max = Math.max(0, ...data.map(val));
   const bestIdx = max > 0 ? data.findIndex((d) => val(d) === max) : -1;
   const fmtVal = (v) => metric === "orders" ? fmtNumber(v) + " ออเดอร์" : fmtCurrency(v);
-  const bestText = bestIdx < 0 ? "" : mode === "hour" ? "ซื้อมากสุดช่วง " + data[bestIdx].label + ":00-" + data[bestIdx].label + ":59 (" + fmtVal(max) + ")" : "ซื้อมากสุดวัน" + fullDays[bestIdx] + " (" + fmtVal(max) + ")";
+  const verb = metric === "profit" ? "กำไรสูงสุด" : "ซื้อมากสุด";
+  const bestText = bestIdx < 0 ? "" : mode === "hour" ? verb + "ช่วง " + data[bestIdx].label + ":00-" + data[bestIdx].label + ":59 (" + fmtVal(max) + ")" : verb + "วัน" + fullDays[bestIdx] + " (" + fmtVal(max) + ")";
   const groups = [["ดึก 00-05", 0, 5], ["เช้า 06-11", 6, 11], ["บ่าย 12-17", 12, 17], ["ค่ำ 18-23", 18, 23]].map(([name, a, b]) => ({ name, v: info.hours.slice(a, b + 1).reduce((x, h) => x + h[metric], 0) }));
   const gTotal = groups.reduce((a, g) => a + g.v, 0);
   const tg = (cur, set, id, label) => React.createElement("button", { key: id, className: "toggle toggle-sm" + (cur === id ? " active" : ""), onClick: () => set(id) }, label);
+  const note = (realOnly ? "นับเฉพาะ " + info.total + " ออเดอร์ที่มีเวลาสั่งซื้อจริงจากแพลตฟอร์ม" : "นับตามเวลาสั่งซื้อจริงจากแพลตฟอร์ม " + info.real + " จาก " + info.total + " ออเดอร์ ที่เหลือใช้เวลาที่บันทึก (สแกนรูปออเดอร์หรือกรอกวันที่-เวลาสั่งซื้อเพื่อให้แม่นขึ้น)") + (metric === "profit" ? " · กำไรนับก่อนหักรายจ่าย/บิลรายเดือน และขึ้นกับต้นทุนที่ใส่ไว้ในสินค้า" : "");
   return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
     React.createElement("div", { className: "section-head" },
       React.createElement("div", { className: "section-title" }, "ช่วงเวลาที่ลูกค้าซื้อ"),
       React.createElement("div", { className: "chart-controls" },
         React.createElement("div", { className: "toggle-group" }, tg(mode, setMode, "hour", "ชั่วโมง"), tg(mode, setMode, "weekday", "วัน")),
-        React.createElement("div", { className: "toggle-group" }, tg(metric, setMetric, "orders", "ออเดอร์"), tg(metric, setMetric, "gross", "ยอดขาย")))),
-    info.total === 0 ? React.createElement("div", { className: "mini-empty" }, "ยังไม่มีข้อมูลในช่วงนี้") : React.createElement("div", null,
+        React.createElement("div", { className: "toggle-group" }, tg(metric, setMetric, "orders", "ออเดอร์"), tg(metric, setMetric, "gross", "ยอดขาย"), tg(metric, setMetric, "profit", "กำไร")))),
+    React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 8 } },
+      React.createElement("select", { value: platformId, onChange: (e) => setPlatformId(e.target.value), style: { fontSize: 13, padding: "4px 8px", borderRadius: 8 } },
+        React.createElement("option", { value: "all" }, "ทุกแพลตฟอร์ม"),
+        platforms.map((p) => React.createElement("option", { key: p.id, value: p.id }, p.name))),
+      React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 13 } },
+        React.createElement("input", { type: "checkbox", checked: realOnly, onChange: (e) => setRealOnly(e.target.checked) }),
+        "เฉพาะออเดอร์ที่มีเวลาสั่งซื้อจริง")),
+    info.total === 0 ? React.createElement("div", { className: "mini-empty" }, "ยังไม่มีข้อมูลในช่วงนี้ (ลองเปลี่ยนตัวกรอง)") : React.createElement("div", null,
       React.createElement("div", { style: { fontSize: 13, fontWeight: 600, marginBottom: 6 } }, bestText),
       React.createElement("div", { className: "chart-wrap" }, React.createElement(ResponsiveContainer, { width: "100%", height: 200 },
         React.createElement(BarChart, { data, margin: { top: 8, right: 8, left: 0, bottom: 0 } },
           React.createElement(CartesianGrid, { strokeDasharray: "3 5", vertical: false, stroke: "#E3E6E2" }),
           React.createElement(XAxis, { dataKey: "label", tick: { fontSize: 11, fill: "#68706B" }, axisLine: false, tickLine: false, interval: mode === "hour" ? 2 : 0 }),
-          React.createElement(YAxis, { tick: { fontSize: 11, fill: "#68706B" }, axisLine: false, tickLine: false, width: 40, allowDecimals: false, tickFormatter: (v) => metric === "gross" && v >= 1e3 ? (v / 1e3).toFixed(0) + "k" : v }),
-          React.createElement(Tooltip, { formatter: (v) => fmtVal(v), labelFormatter: (l) => mode === "hour" ? l + ":00-" + l + ":59" : "วัน" + (fullDays[data.findIndex((d) => d.label === l)] || l), contentStyle: { borderRadius: 12, border: "1px solid #E3E6E2", fontSize: 12, boxShadow: "0 8px 24px rgba(15,43,38,0.12)" }, cursor: { fill: "rgba(15,43,38,0.06)" } }),
-          React.createElement(Bar, { dataKey: metric, radius: [4, 4, 0, 0] }, data.map((d, i) => React.createElement(Cell, { key: d.label, fill: i === bestIdx ? "#B8862F" : "#173D35" })))))),
+          React.createElement(YAxis, { tick: { fontSize: 11, fill: "#68706B" }, axisLine: false, tickLine: false, width: 40, allowDecimals: false, tickFormatter: (v) => metric !== "orders" && Math.abs(v) >= 1e3 ? (v / 1e3).toFixed(0) + "k" : v }),
+          React.createElement(Tooltip, { formatter: (v) => metric === "orders" ? fmtNumber(v) + " ออเดอร์" : fmtCurrency(v), labelFormatter: (l) => mode === "hour" ? l + ":00-" + l + ":59" : "วัน" + (fullDays[data.findIndex((d) => d.label === l)] || l), contentStyle: { borderRadius: 12, border: "1px solid #E3E6E2", fontSize: 12, boxShadow: "0 8px 24px rgba(15,43,38,0.12)" }, cursor: { fill: "rgba(15,43,38,0.06)" } }),
+          React.createElement(Bar, { dataKey: metric, name: metricName, radius: [4, 4, 0, 0] }, data.map((d, i) => React.createElement(Cell, { key: d.label, fill: i === bestIdx ? "#B8862F" : val(d) < 0 ? "#B5534A" : "#173D35" })))))),
       mode === "hour" && gTotal > 0 && React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 } }, groups.map((g) => React.createElement("div", { key: g.name, style: { background: "#F6F7F5", borderRadius: 10, padding: "8px 10px" } },
         React.createElement("div", { style: { fontSize: 11.5, color: "#68706B" } }, g.name),
         React.createElement("div", { style: { fontSize: 14, fontWeight: 700 } }, fmtVal(g.v)),
         React.createElement("div", { style: { fontSize: 11.5, color: "#68706B" } }, Math.round(g.v / gTotal * 1000) / 10 + "%")))),
-      React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 10 } }, "นับตามเวลาสั่งซื้อจริงจากแพลตฟอร์ม " + info.real + " จาก " + info.total + " ออเดอร์ ที่เหลือใช้เวลาที่บันทึก (สแกนรูปออเดอร์หรือกรอกวันที่-เวลาสั่งซื้อเพื่อให้แม่นขึ้น)")));
+      React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 10 } }, note)));
 }
 function PaymentMethodChart({ sales }) {
   const [metric, setMetric] = useState("orders");
@@ -1788,7 +1878,7 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
         style: { width: Math.max(margin, 2) + "%" }
       }
     )), /* @__PURE__ */ React.createElement("div", { className: "margin-pct" }, margin.toFixed(1), "%"));
-  }))), React.createElement(PurchaseTimeChart, { sales: filteredSales }), React.createElement(PaymentMethodChart, { sales: filteredSales }), /* @__PURE__ */ React.createElement(PlatformFeeReport, { sales, products, platforms }), /* @__PURE__ */ React.createElement(CustomerStats, { sales, products }));
+  }))), React.createElement(PurchaseTimeChart, { sales: filteredSales, products, platforms }), React.createElement(PaymentMethodChart, { sales: filteredSales }), /* @__PURE__ */ React.createElement(PlatformFeeReport, { sales, products, platforms }), /* @__PURE__ */ React.createElement(CustomerStats, { sales, products }));
 }
 function PlatformFeeReport({ sales, products, platforms }) {
   const pad = (n) => String(n).padStart(2, "0");
