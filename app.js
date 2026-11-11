@@ -1463,8 +1463,8 @@ function ImportModal({ products, platforms, onClose, onImport }) {
         if (candidate.length > sheetRows.length) sheetRows = candidate;
       }
       if (!sheetRows.length || sheetRows.length < 2) throw new Error("ไม่พบข้อมูลอย่างน้อย 2 แถว");
-      const textRows = sheetRows.map((row) => row.map((cell) => String(cell ?? "").replace(/[\\t\\r\\n]/g, " ")).join("\\t"));
-      setRawText(textRows.join("\\n"));
+      const textRows = sheetRows.map((row) => row.map((cell) => String(cell ?? "").replace(/[\t\r\n]/g, " ")).join("\t"));
+      setRawText(textRows.join("\n"));
       setFileMsg("อ่านไฟล์ " + file.name + " สำเร็จ — " + (sheetRows.length - 1) + " แถวข้อมูล");
     } catch (err) {
       setFileMsg("อ่านไฟล์ไม่ได้: " + (err.message || "โปรดลองไฟล์ .xlsx หรือ .csv"));
