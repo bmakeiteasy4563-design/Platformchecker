@@ -1383,7 +1383,8 @@ function ImportModal({ products, platforms, onClose, onImport }) {
   const [step, setStep] = useState(1);
   const [platformId, setPlatformId] = useState(platforms[0]?.id || "");
   const [rawText, setRawText] = useState("");
-  const [mapping, setMapping] = useState({ name: 0, quantity: 1, price: 2, coupon: -1, fee: -1, date: -1 });
+  const [fileMsg, setFileMsg] = useState("");
+  const [mapping, setMapping] = useState({ name: 0, quantity: 1, price: 2, coupon: -1, fee: -1, date: -1, orderNo: -1 });
   const [result, setResult] = useState(null);
   const rows = useMemo(
     () => rawText.trim().split("\n").filter(Boolean).map((line) => line.split(/\t|,/).map((c) => c.trim())),
@@ -1398,7 +1399,8 @@ function ImportModal({ products, platforms, onClose, onImport }) {
     price: "\u0E23\u0E32\u0E04\u0E32",
     coupon: "\u0E04\u0E39\u0E1B\u0E2D\u0E07",
     fee: "\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21 (\u0E16\u0E49\u0E32\u0E21\u0E35\u0E43\u0E19\u0E44\u0E1F\u0E25\u0E4C)",
-    date: "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"
+    date: "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48",
+    orderNo: "เลขคำสั่งซื้อ / Order ID"
   };
   const requiredFields = ["name", "quantity", "price"];
   function autoMapColumns(headerRow) {
@@ -1415,8 +1417,27 @@ function ImportModal({ products, platforms, onClose, onImport }) {
       price: find(["\u0E23\u0E32\u0E04\u0E32", "price", "amount", "\u0E22\u0E2D\u0E14"]),
       coupon: find(["\u0E04\u0E39\u0E1B\u0E2D\u0E07", "coupon", "\u0E2A\u0E48\u0E27\u0E19\u0E25\u0E14", "discount"]),
       fee: find(["\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21", "fee", "commission", "\u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21"]),
-      date: find(["\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48", "date", "\u0E40\u0E27\u0E25\u0E32", "time"])
+      date: find(["\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48", "date", "\u0E40\u0E27\u0E25\u0E32", "time"]),
+      orderNo: find(["order id", "order no", "order number", "order sn", "order_id", "หมายเลขคำสั่งซื้อ", "เลขคำสั่งซื้อ", "หมายเลขออเดอร์"])
     };
+    // Prefer exact Shopee Seller Center order-export columns when present.
+    const exact = (label) => headerRow.findIndex((h) => String(h || "").trim() === label);
+    const shopeeOrderNo = exact("หมายเลขคำสั่งซื้อ");
+    const shopeeName = exact("ชื่อสินค้า");
+    const shopeeQty = exact("จำนวน");
+    const shopeePrice = exact("ราคาขาย");
+    const shopeeDate = exact("วันที่ทำการสั่งซื้อ");
+    const shopeeCoupon = exact("โค้ดส่วนลดชำระโดยผู้ขาย");
+    const shopeeFee = exact("ค่าคอมมิชชั่น");
+    if (shopeeOrderNo >= 0 && shopeeName >= 0) {
+      if (shopeeName >= 0) guess.name = shopeeName;
+      if (shopeeQty >= 0) guess.quantity = shopeeQty;
+      if (shopeePrice >= 0) guess.price = shopeePrice;
+      if (shopeeDate >= 0) guess.date = shopeeDate;
+      if (shopeeOrderNo >= 0) guess.orderNo = shopeeOrderNo;
+      if (shopeeCoupon >= 0) guess.coupon = shopeeCoupon;
+      if (shopeeFee >= 0) guess.fee = shopeeFee;
+    }
     requiredFields.forEach((k, i) => {
       if (guess[k] === -1) guess[k] = Math.min(i, headerRow.length - 1);
     });
@@ -1427,13 +1448,44 @@ function ImportModal({ products, platforms, onClose, onImport }) {
     setMapping(autoMapColumns(header));
     setStep(2);
   }
+  async function pickExcelFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setFileMsg("กำลังอ่านไฟล์...");
+    try {
+      const mod = await import("https://esm.sh/xlsx@0.18.5");
+      const X = mod.utils ? mod : mod.default;
+      const wb = X.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+      let sheetRows = [];
+      for (const sheetName of wb.SheetNames) {
+        const candidate = X.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false, defval: "" });
+        if (candidate.length > sheetRows.length) sheetRows = candidate;
+      }
+      if (!sheetRows.length || sheetRows.length < 2) throw new Error("ไม่พบข้อมูลอย่างน้อย 2 แถว");
+      const textRows = sheetRows.map((row) => row.map((cell) => String(cell ?? "").replace(/[\\t\\r\\n]/g, " ")).join("\\t"));
+      setRawText(textRows.join("\\n"));
+      setFileMsg("อ่านไฟล์ " + file.name + " สำเร็จ — " + (sheetRows.length - 1) + " แถวข้อมูล");
+    } catch (err) {
+      setFileMsg("อ่านไฟล์ไม่ได้: " + (err.message || "โปรดลองไฟล์ .xlsx หรือ .csv"));
+    }
+  }
   const mappingValid = requiredFields.every((k) => mapping[k] >= 0);
   function runImport() {
     const platform = platforms.find((p) => p.id === platformId);
     let imported = 0, skipped = 0, notFound = 0;
     const newSales = [];
     const stockDelta = {};
+    const shopeeStatusCol = header.findIndex((h) => String(h || "").trim() === "สถานะการสั่งซื้อ");
+    const shopeeCommissionCol = header.findIndex((h) => String(h || "").trim() === "ค่าคอมมิชชั่น");
+    const shopeeTransactionCol = header.findIndex((h) => String(h || "").trim() === "Transaction Fee");
+    const shopeeServiceCol = header.findIndex((h) => String(h || "").trim() === "ค่าบริการ");
     dataRows.forEach((row) => {
+      // Do not record canceled Shopee orders as sales or deduct their stock.
+      if (shopeeStatusCol >= 0 && String(row[shopeeStatusCol] || "").includes("ยกเลิก")) {
+        skipped++;
+        return;
+      }
       const name = row[mapping.name];
       const qty = parseFloat(row[mapping.quantity]);
       const price = parseFloat(row[mapping.price]);
@@ -1453,11 +1505,18 @@ function ImportModal({ products, platforms, onClose, onImport }) {
       let date = new Date(dateRaw);
       if (isNaN(date.getTime())) date = /* @__PURE__ */ new Date();
       const fileFee = mapping.fee >= 0 ? parseFloat(row[mapping.fee]) : NaN;
-      const fee = !isNaN(fileFee) ? fileFee : price * qty * ((platform?.feePercent || 0) / 100);
+      // Shopee order export has separate commission, transaction fee and service fee columns.
+      const fee = shopeeCommissionCol >= 0
+        ? (parseFloat(row[shopeeCommissionCol]) || 0) +
+          (shopeeTransactionCol >= 0 ? parseFloat(row[shopeeTransactionCol]) || 0 : 0) +
+          (shopeeServiceCol >= 0 ? parseFloat(row[shopeeServiceCol]) || 0 : 0)
+        : (!isNaN(fileFee) ? fileFee : price * qty * ((platform?.feePercent || 0) / 100));
       newSales.push({
         id: uid(),
         productId: product.id,
         platformId,
+        orderId: mapping.orderNo >= 0 && row[mapping.orderNo] ? String(row[mapping.orderNo]).trim() : undefined,
+        orderNo: mapping.orderNo >= 0 && row[mapping.orderNo] ? String(row[mapping.orderNo]).trim() : undefined,
         quantity: qty,
         price,
         coupon,
@@ -1472,7 +1531,11 @@ function ImportModal({ products, platforms, onClose, onImport }) {
     setResult({ imported, skipped, notFound });
     setStep(3);
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-head" }, /* @__PURE__ */ React.createElement("div", { className: "modal-title" }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C"), /* @__PURE__ */ React.createElement("button", { className: "icon-btn", onClick: onClose }, /* @__PURE__ */ React.createElement(X, { size: 18 }))), /* @__PURE__ */ React.createElement("div", { className: "step-indicator" }, ["Data", "Mapping", "Result"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: label, className: "step-chip " + (step === i + 1 ? "active" : step > i + 1 ? "done" : "") }, /* @__PURE__ */ React.createElement("span", { className: "step-num" }, String(i + 1).padStart(2, "0")), /* @__PURE__ */ React.createElement("span", null, label)))), step === 1 && /* @__PURE__ */ React.createElement("div", { className: "modal-body" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "Platform \u0E02\u0E2D\u0E07\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E19\u0E35\u0E49"), /* @__PURE__ */ React.createElement("select", { value: platformId, onChange: (e) => setPlatformId(e.target.value) }, platforms.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name)))), /* @__PURE__ */ React.createElement("div", { className: "paste-area" }, /* @__PURE__ */ React.createElement(FileSpreadsheet, { size: 22, strokeWidth: 1.6 }), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-head" }, /* @__PURE__ */ React.createElement("div", { className: "modal-title" }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C"), /* @__PURE__ */ React.createElement("button", { className: "icon-btn", onClick: onClose }, /* @__PURE__ */ React.createElement(X, { size: 18 }))), /* @__PURE__ */ React.createElement("div", { className: "step-indicator" }, ["Data", "Mapping", "Result"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: label, className: "step-chip " + (step === i + 1 ? "active" : step > i + 1 ? "done" : "") }, /* @__PURE__ */ React.createElement("span", { className: "step-num" }, String(i + 1).padStart(2, "0")), /* @__PURE__ */ React.createElement("span", null, label)))), step === 1 && /* @__PURE__ */ React.createElement("div", { className: "modal-body" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "Platform \u0E02\u0E2D\u0E07\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E19\u0E35\u0E49"), /* @__PURE__ */ React.createElement("select", { value: platformId, onChange: (e) => setPlatformId(e.target.value) }, platforms.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name)))),
+    React.createElement("label", { className: "btn btn-outline btn-block", style: { marginTop: 10, cursor: "pointer", textAlign: "center" } }, "เลือกไฟล์ Excel / CSV (.xlsx, .xls, .csv)", React.createElement("input", { type: "file", accept: ".xlsx,.xls,.csv", onChange: pickExcelFile, style: { display: "none" } })),
+    fileMsg && React.createElement("div", { className: "mini-empty", style: { textAlign: "left", padding: "6px 0" } }, fileMsg),
+    React.createElement("div", { style: { fontSize: 12, color: "#68706B", margin: "8px 0" } }, "หรือวางข้อมูลจาก Excel ลงในช่องด้านล่าง"),
+    /* @__PURE__ */ React.createElement("div", { className: "paste-area" }, /* @__PURE__ */ React.createElement(FileSpreadsheet, { size: 22, strokeWidth: 1.6 }), /* @__PURE__ */ React.createElement(
     "textarea",
     {
       placeholder: "\u0E27\u0E32\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 (\u0E04\u0E31\u0E48\u0E19\u0E14\u0E49\u0E27\u0E22 Tab \u0E2B\u0E23\u0E37\u0E2D , )\n\u0E41\u0E16\u0E27\u0E41\u0E23\u0E01\u0E40\u0E1B\u0E47\u0E19\u0E2B\u0E31\u0E27\u0E15\u0E32\u0E23\u0E32\u0E07 \u0E40\u0E0A\u0E48\u0E19:\n\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32,\u0E08\u0E33\u0E19\u0E27\u0E19,\u0E23\u0E32\u0E04\u0E32,\u0E04\u0E39\u0E1B\u0E2D\u0E07,\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21,\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\n\n\u0E16\u0E49\u0E32\u0E44\u0E1F\u0E25\u0E4C\u0E08\u0E32\u0E01\u0E41\u0E1E\u0E25\u0E15\u0E1F\u0E2D\u0E23\u0E4C\u0E21\u0E21\u0E35\u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21\u0E08\u0E23\u0E34\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E41\u0E25\u0E49\u0E27 \u0E23\u0E30\u0E1A\u0E1A\u0E08\u0E30\u0E43\u0E0A\u0E49\u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E19\u0E31\u0E49\u0E19\u0E41\u0E17\u0E19\u0E01\u0E32\u0E23\u0E1B\u0E23\u0E30\u0E21\u0E32\u0E13 %",
@@ -1501,8 +1564,7 @@ function SalesPage({ products, platforms, sales, onAddSale, onImport, onDeleteSa
       onImport
     }
   ));
-}
-function compressImage(file, maxSide = 240, quality = 0.72) {
+}function compressImage(file, maxSide = 240, quality = 0.72) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
