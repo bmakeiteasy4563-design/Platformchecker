@@ -131,7 +131,7 @@ function computeSaleMetrics(sale, product, platform) {
 function aggregate(sales, products, platforms) {
   const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
   const platformMap = Object.fromEntries(platforms.map((p) => [p.id, p]));
-  let gross = 0, coupon = 0, fee = 0, netRevenue = 0, cost = 0, profit = 0, orders = 0, loss = 0, lossCount = 0;
+  let gross = 0, coupon = 0, fee = 0, other = 0, netRevenue = 0, cost = 0, profit = 0, orders = 0, loss = 0, lossCount = 0;
   const orderSet = /* @__PURE__ */ new Set();
   for (const s of sales) {
     const m = computeSaleMetrics(s, productMap[s.productId], platformMap[s.platformId]);
@@ -139,12 +139,13 @@ function aggregate(sales, products, platforms) {
     gross += m.gross;
     coupon += m.coupon;
     fee += m.fee;
+    other += m.otherExpense;
     netRevenue += m.netRevenue;
     cost += m.cost;
     profit += m.profit;
   }
   const margin = gross > 0 ? profit / gross * 100 : 0;
-  return { gross, coupon, fee, netRevenue, cost, profit, orders: orderSet.size, margin, loss, lossCount };
+  return { gross, coupon, fee, other, netRevenue, cost, profit, orders: orderSet.size, margin, loss, lossCount };
 }
 function monthsCovered(start, end) {
   const dn = (y, m, d) => Date.UTC(y, m - 1, d) / 864e5;
@@ -676,6 +677,8 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
   const [orderNo, setOrderNo] = useState(initial?.orderNo || "");
   const [customer, setCustomer] = useState(initial?.customer || "");
   const [payment, setPayment] = useState(initial?.payment || "");
+  const [otherItems, setOtherItems] = useState(() => initial && initial.otherItems ? initial.otherItems.map((x) => ({ name: x.name, amount: String(x.amount) })) : []);
+  const [customName, setCustomName] = useState("");
   const [orderAt, setOrderAt] = useState(initial?.orderAt ? bkkDate(initial.orderAt) + "T" + hm(initial.orderAt) : "");
   const [time, setTime] = useState(initial ? fmtTime(initial.date) : hm(/* @__PURE__ */ new Date()));
   const [scanMsg, setScanMsg] = useState("");
@@ -741,6 +744,41 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
   })();
   const cost = lines.reduce((a, l) => a + (l.product?.cost || 0) * (parseFloat(l.quantity) || 0), 0);
   const profit = gross - couponNum - fee.baht - other.baht - cost;
+  const otherInfo = useMemo(() => {
+    const groups = /* @__PURE__ */ new Map();
+    (sales || []).forEach((s) => {
+      if (!s.otherItems || !s.otherItems.length || s.status) return;
+      const k = s.orderId || s.id;
+      if (!groups.has(k)) groups.set(k, { at: new Date(s.createdAt || s.date).getTime(), items: /* @__PURE__ */ new Map() });
+      const g = groups.get(k);
+      s.otherItems.forEach((it) => {
+        const n = String(it.name || "").trim();
+        if (n) g.items.set(n, (g.items.get(n) || 0) + (it.amount || 0));
+      });
+    });
+    const sorted = [...groups.values()].sort((a, b) => b.at - a.at);
+    const lastAmt = Object.create(null);
+    const nameSet = /* @__PURE__ */ new Set();
+    sorted.forEach((g) => g.items.forEach((amt, n) => { nameSet.add(n); if (lastAmt[n] === void 0) lastAmt[n] = r2(amt); }));
+    const lastSet = sorted.length ? [...sorted[0].items.entries()].map(([name, amt]) => ({ name, amount: String(r2(amt)) })) : [];
+    return { lastAmt, lastSet, names: [...nameSet] };
+  }, [sales]);
+  const quickNames = [.../* @__PURE__ */ new Set([...OTHER_DEFAULTS, ...otherInfo.names])].slice(0, 14);
+  const setItems2 = (arr) => {
+    setOtherItems(arr);
+    setOtherIn({ mode: "baht", value: arr.length ? String(r2(arr.reduce((a, x) => a + (parseFloat(x.amount) || 0), 0))) : "" });
+  };
+  const toggleName = (name) => {
+    if (otherItems.some((x) => x.name === name)) setItems2(otherItems.filter((x) => x.name !== name));
+    else setItems2([...otherItems, { name, amount: otherInfo.lastAmt[name] !== void 0 ? String(otherInfo.lastAmt[name]) : "" }]);
+  };
+  const addCustom = () => {
+    const name = customName.trim();
+    if (!name || otherItems.some((x) => x.name === name)) { setCustomName(""); return; }
+    setItems2([...otherItems, { name, amount: otherInfo.lastAmt[name] !== void 0 ? String(otherInfo.lastAmt[name]) : "" }]);
+    setCustomName("");
+  };
+  const itemsTotal = r2(otherItems.reduce((a, x) => a + (parseFloat(x.amount) || 0), 0));
   const dupCount = orderNo.trim() ? new Set((sales || []).filter((x) => String(x.orderNo || "").toUpperCase() === orderNo.trim().toUpperCase() && !(initial && x.orderId === initial.orderId)).map((x) => x.orderId || x.id)).size : 0;
   const dupWarn = dupCount ? "⚠ เลขออเดอร์นี้ถูกบันทึกไปแล้ว " + dupCount + " ครั้ง ถ้าบันทึกอีกจะถูกนับซ้ำ" : "";
   const canSubmit = platformId && lines.every((l) => l.productId && parseFloat(l.price) > 0 && parseFloat(l.quantity) > 0);
@@ -763,6 +801,8 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
     const n = lines.length;
     const alloc = (total) => { let rest = r2(total); return lines.map((l, i) => { const v = i === n - 1 ? rest : r2(gross > 0 ? total * l.g / gross : total / n); rest = r2(rest - v); return v; }); };
     const cs = alloc(couponNum), fs = alloc(fee.baht), os = alloc(other.baht);
+    const itemList = otherItems.filter((x) => (parseFloat(x.amount) || 0) > 0).map((x) => ({ name: x.name, amount: parseFloat(x.amount) }));
+    const itemAllocs = itemList.map((it) => alloc(it.amount));
     const dateIso = (useTime ? new Date(useDate + "T" + useTime + ":00+07:00") : new Date(useDate)).toISOString();
     lines.forEach((l, i) => onSubmit({
       id: i === 0 && initial ? initial.id : uid(),
@@ -778,7 +818,8 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       price: parseFloat(l.price),
       coupon: cs[i],
       fee: fs[i],
-      otherExpense: os[i],
+      otherExpense: itemList.length ? r2(itemAllocs.reduce((a, arr) => a + arr[i], 0)) : os[i],
+      otherItems: itemList.length ? itemList.map((it, k) => ({ name: it.name, amount: itemAllocs[k][i] })) : void 0,
       unitCost: initial && initial.productId === l.productId ? initial.unitCost ?? (l.product?.cost || 0) : l.product?.cost || 0,
       date: dateIso
     }));
@@ -788,7 +829,7 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
     }
     setItems([{ productId: "", quantity: 1, price: "" }]); setPlatformId(""); setCoupon(0);
     setFeeIn({ mode: "pct", value: "0" }); setOtherIn({ mode: "baht", value: "" });
-    setOrderNo(""); setCustomer(""); setOrderAt(""); setPayment("");
+    setOrderNo(""); setCustomer(""); setOrderAt(""); setPayment(""); setOtherItems([]); setCustomName("");
     setFeeTouched(false); setDate(todayStr()); setTime(hm(/* @__PURE__ */ new Date())); setDateTouched(false); setTimeTouched(false);
   }
   const num = (props) => React.createElement("input", { type: "number", min: "0", step: "any", inputMode: "decimal", ...props });
@@ -823,7 +864,20 @@ function QuickSaleForm({ products, platforms, onSubmit, initial, onCancel, sales
       React.createElement("label", { className: "field" }, React.createElement("span", null, "คูปอง (บาท)"),
         num({ value: coupon, onChange: (e) => setCoupon(e.target.value) })),
       amountPair("ค่าธรรมเนียม", feeIn, setFeeIn, fee, () => setFeeTouched(true)),
-      amountPair("รายจ่ายอื่นๆ", otherIn, setOtherIn, other, null),
+      amountPair("รายจ่ายอื่นๆ", otherIn, setOtherIn, other, () => setOtherItems([])),
+      React.createElement("div", { style: { border: "1px dashed #D9DDD8", borderRadius: 12, padding: 10 } },
+        React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: "#68706B", marginBottom: 8 } }, "รายละเอียดรายจ่ายอื่นๆ ต่อออเดอร์ (ค่ากล่อง เทปกาว ใบปะหน้า บับเบิ้ล ฯลฯ)"),
+        React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 } },
+          quickNames.map((n) => { const on = otherItems.some((x) => x.name === n); return React.createElement("button", { key: n, type: "button", onClick: () => toggleName(n), style: { padding: "6px 12px", borderRadius: 20, border: "1px solid " + (on ? "#0F2B26" : "#E1E5E0"), background: on ? "#0F2B26" : "#F6F7F5", color: on ? "#fff" : "#1C201D", fontSize: 13, fontFamily: "inherit", cursor: "pointer" } }, n); }),
+          otherInfo.lastSet.length > 0 && otherItems.length === 0 && React.createElement("button", { type: "button", onClick: () => setItems2(otherInfo.lastSet), style: { padding: "6px 12px", borderRadius: 20, border: "1px dashed #B8862F", background: "#FBF1DD", color: "#7A5B21", fontSize: 13, fontFamily: "inherit", cursor: "pointer" } }, "ใช้ชุดล่าสุด")),
+        otherItems.map((it, k) => React.createElement("div", { key: it.name, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } },
+          React.createElement("span", { style: { flex: 1, minWidth: 0, fontSize: 13.5, wordBreak: "break-word" } }, it.name),
+          React.createElement("input", { type: "number", min: "0", step: "any", inputMode: "decimal", placeholder: "บาท", value: it.amount, onChange: (e) => setItems2(otherItems.map((x, j) => j === k ? { ...x, amount: e.target.value } : x)), style: { width: 92, padding: "8px 10px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
+          React.createElement("button", { type: "button", className: "icon-btn-sm", "aria-label": "ลบรายการ", onClick: () => setItems2(otherItems.filter((_, j) => j !== k)) }, React.createElement(Trash2, { size: 14 })))),
+        React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
+          React.createElement("input", { value: customName, placeholder: "เพิ่มรายการอื่น เช่น ค่าถุงซิป", onChange: (e) => setCustomName(e.target.value), onKeyDown: (e) => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } }, style: { flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
+          React.createElement("button", { type: "button", className: "btn btn-outline btn-sm", onClick: addCustom }, "เพิ่ม")),
+        otherItems.length > 0 && React.createElement("div", { style: { fontSize: 12.5, color: "#68706B", marginTop: 8 } }, "รวม " + fmtCurrency(itemsTotal) + " (ใส่ในช่องรายจ่ายอื่นๆ ให้อัตโนมัติ ถ้าพิมพ์ตัวเลขในช่องข้างบนเอง รายการจะถูกล้าง)")),
       React.createElement("div", { className: "field-row" },
         React.createElement("label", { className: "field" }, React.createElement("span", null, "วันที่"),
           React.createElement("input", { type: "date", value: date, onChange: (e) => { setDate(e.target.value); setDateTouched(true); } })),
@@ -1324,10 +1378,10 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
   const salesTable = () => {
     const pm = Object.fromEntries(products.map((p) => [p.id, p]));
     const plm = Object.fromEntries(platforms.map((p) => [p.id, p]));
-    const head = ["วันที่", "สินค้า", "SKU", "แพลตฟอร์ม", "จำนวน", "ราคา/ชิ้น", "ยอดขาย", "คูปอง", "ค่าธรรมเนียม", "รายจ่ายอื่นๆ", "ต้นทุน", "กำไร", "สถานะ", "เวลา", "ลูกค้า", "เลขออเดอร์", "สั่งซื้อตามแพลตฟอร์ม", "วิธีชำระเงิน"];
+    const head = ["วันที่", "สินค้า", "SKU", "แพลตฟอร์ม", "จำนวน", "ราคา/ชิ้น", "ยอดขาย", "คูปอง", "ค่าธรรมเนียม", "รายจ่ายอื่นๆ", "ต้นทุน", "กำไร", "สถานะ", "เวลา", "ลูกค้า", "เลขออเดอร์", "สั่งซื้อตามแพลตฟอร์ม", "วิธีชำระเงิน", "รายละเอียดรายจ่ายอื่นๆ"];
     const rows = [...sales].sort((a, b) => new Date(a.date) - new Date(b.date)).map((s) => {
       const m = computeSaleMetrics(s, pm[s.productId], plm[s.platformId]);
-      return [ymd(s.date), pm[s.productId]?.name || "", pm[s.productId]?.sku || "", plm[s.platformId]?.name || "", s.quantity, s.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : s.status === "cancelled" ? "ยกเลิก" : "ปกติ", fmtTime(s.date), s.customer || "", s.orderNo || "", s.orderAt ? bkkDate(s.orderAt) + " " + hm(s.orderAt) : "", s.payment || ""];
+      return [ymd(s.date), pm[s.productId]?.name || "", pm[s.productId]?.sku || "", plm[s.platformId]?.name || "", s.quantity, s.price, m.gross, m.coupon, m.fee, m.otherExpense, m.cost, m.profit, s.status === "returned" ? "ตีกลับ" : s.status === "lost" ? "สูญหาย" : s.status === "cancelled" ? "ยกเลิก" : "ปกติ", fmtTime(s.date), s.customer || "", s.orderNo || "", s.orderAt ? bkkDate(s.orderAt) + " " + hm(s.orderAt) : "", s.payment || "", (s.otherItems || []).map((i) => i.name + " " + i.amount).join(", ")];
     });
     return [head, ...rows];
   };
@@ -1383,8 +1437,7 @@ function ImportModal({ products, platforms, onClose, onImport }) {
   const [step, setStep] = useState(1);
   const [platformId, setPlatformId] = useState(platforms[0]?.id || "");
   const [rawText, setRawText] = useState("");
-  const [fileMsg, setFileMsg] = useState("");
-  const [mapping, setMapping] = useState({ name: 0, quantity: 1, price: 2, coupon: -1, fee: -1, date: -1, orderNo: -1 });
+  const [mapping, setMapping] = useState({ name: 0, quantity: 1, price: 2, coupon: -1, fee: -1, date: -1 });
   const [result, setResult] = useState(null);
   const rows = useMemo(
     () => rawText.trim().split("\n").filter(Boolean).map((line) => line.split(/\t|,/).map((c) => c.trim())),
@@ -1399,8 +1452,7 @@ function ImportModal({ products, platforms, onClose, onImport }) {
     price: "\u0E23\u0E32\u0E04\u0E32",
     coupon: "\u0E04\u0E39\u0E1B\u0E2D\u0E07",
     fee: "\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21 (\u0E16\u0E49\u0E32\u0E21\u0E35\u0E43\u0E19\u0E44\u0E1F\u0E25\u0E4C)",
-    date: "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48",
-    orderNo: "เลขคำสั่งซื้อ / Order ID"
+    date: "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"
   };
   const requiredFields = ["name", "quantity", "price"];
   function autoMapColumns(headerRow) {
@@ -1417,27 +1469,8 @@ function ImportModal({ products, platforms, onClose, onImport }) {
       price: find(["\u0E23\u0E32\u0E04\u0E32", "price", "amount", "\u0E22\u0E2D\u0E14"]),
       coupon: find(["\u0E04\u0E39\u0E1B\u0E2D\u0E07", "coupon", "\u0E2A\u0E48\u0E27\u0E19\u0E25\u0E14", "discount"]),
       fee: find(["\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21", "fee", "commission", "\u0E04\u0E48\u0E32\u0E04\u0E2D\u0E21"]),
-      date: find(["\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48", "date", "\u0E40\u0E27\u0E25\u0E32", "time"]),
-      orderNo: find(["order id", "order no", "order number", "order sn", "order_id", "หมายเลขคำสั่งซื้อ", "เลขคำสั่งซื้อ", "หมายเลขออเดอร์"])
+      date: find(["\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48", "date", "\u0E40\u0E27\u0E25\u0E32", "time"])
     };
-    // Prefer exact Shopee Seller Center order-export columns when present.
-    const exact = (label) => headerRow.findIndex((h) => String(h || "").trim() === label);
-    const shopeeOrderNo = exact("หมายเลขคำสั่งซื้อ");
-    const shopeeName = exact("ชื่อสินค้า");
-    const shopeeQty = exact("จำนวน");
-    const shopeePrice = exact("ราคาขาย");
-    const shopeeDate = exact("วันที่ทำการสั่งซื้อ");
-    const shopeeCoupon = exact("โค้ดส่วนลดชำระโดยผู้ขาย");
-    const shopeeFee = exact("ค่าคอมมิชชั่น");
-    if (shopeeOrderNo >= 0 && shopeeName >= 0) {
-      if (shopeeName >= 0) guess.name = shopeeName;
-      if (shopeeQty >= 0) guess.quantity = shopeeQty;
-      if (shopeePrice >= 0) guess.price = shopeePrice;
-      if (shopeeDate >= 0) guess.date = shopeeDate;
-      if (shopeeOrderNo >= 0) guess.orderNo = shopeeOrderNo;
-      if (shopeeCoupon >= 0) guess.coupon = shopeeCoupon;
-      if (shopeeFee >= 0) guess.fee = shopeeFee;
-    }
     requiredFields.forEach((k, i) => {
       if (guess[k] === -1) guess[k] = Math.min(i, headerRow.length - 1);
     });
@@ -1448,44 +1481,13 @@ function ImportModal({ products, platforms, onClose, onImport }) {
     setMapping(autoMapColumns(header));
     setStep(2);
   }
-  async function pickExcelFile(e) {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = "";
-    if (!file) return;
-    setFileMsg("กำลังอ่านไฟล์...");
-    try {
-      const mod = await import("https://esm.sh/xlsx@0.18.5");
-      const X = mod.utils ? mod : mod.default;
-      const wb = X.read(await file.arrayBuffer(), { type: "array", cellDates: false });
-      let sheetRows = [];
-      for (const sheetName of wb.SheetNames) {
-        const candidate = X.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false, defval: "" });
-        if (candidate.length > sheetRows.length) sheetRows = candidate;
-      }
-      if (!sheetRows.length || sheetRows.length < 2) throw new Error("ไม่พบข้อมูลอย่างน้อย 2 แถว");
-      const textRows = sheetRows.map((row) => row.map((cell) => String(cell ?? "").replace(/[\t\r\n]/g, " ")).join("\t"));
-      setRawText(textRows.join("\n"));
-      setFileMsg("อ่านไฟล์ " + file.name + " สำเร็จ — " + (sheetRows.length - 1) + " แถวข้อมูล");
-    } catch (err) {
-      setFileMsg("อ่านไฟล์ไม่ได้: " + (err.message || "โปรดลองไฟล์ .xlsx หรือ .csv"));
-    }
-  }
   const mappingValid = requiredFields.every((k) => mapping[k] >= 0);
   function runImport() {
     const platform = platforms.find((p) => p.id === platformId);
     let imported = 0, skipped = 0, notFound = 0;
     const newSales = [];
     const stockDelta = {};
-    const shopeeStatusCol = header.findIndex((h) => String(h || "").trim() === "สถานะการสั่งซื้อ");
-    const shopeeCommissionCol = header.findIndex((h) => String(h || "").trim() === "ค่าคอมมิชชั่น");
-    const shopeeTransactionCol = header.findIndex((h) => String(h || "").trim() === "Transaction Fee");
-    const shopeeServiceCol = header.findIndex((h) => String(h || "").trim() === "ค่าบริการ");
     dataRows.forEach((row) => {
-      // Do not record canceled Shopee orders as sales or deduct their stock.
-      if (shopeeStatusCol >= 0 && String(row[shopeeStatusCol] || "").includes("ยกเลิก")) {
-        skipped++;
-        return;
-      }
       const name = row[mapping.name];
       const qty = parseFloat(row[mapping.quantity]);
       const price = parseFloat(row[mapping.price]);
@@ -1505,18 +1507,11 @@ function ImportModal({ products, platforms, onClose, onImport }) {
       let date = new Date(dateRaw);
       if (isNaN(date.getTime())) date = /* @__PURE__ */ new Date();
       const fileFee = mapping.fee >= 0 ? parseFloat(row[mapping.fee]) : NaN;
-      // Shopee order export has separate commission, transaction fee and service fee columns.
-      const fee = shopeeCommissionCol >= 0
-        ? (parseFloat(row[shopeeCommissionCol]) || 0) +
-          (shopeeTransactionCol >= 0 ? parseFloat(row[shopeeTransactionCol]) || 0 : 0) +
-          (shopeeServiceCol >= 0 ? parseFloat(row[shopeeServiceCol]) || 0 : 0)
-        : (!isNaN(fileFee) ? fileFee : price * qty * ((platform?.feePercent || 0) / 100));
+      const fee = !isNaN(fileFee) ? fileFee : price * qty * ((platform?.feePercent || 0) / 100);
       newSales.push({
         id: uid(),
         productId: product.id,
         platformId,
-        orderId: mapping.orderNo >= 0 && row[mapping.orderNo] ? String(row[mapping.orderNo]).trim() : undefined,
-        orderNo: mapping.orderNo >= 0 && row[mapping.orderNo] ? String(row[mapping.orderNo]).trim() : undefined,
         quantity: qty,
         price,
         coupon,
@@ -1531,11 +1526,7 @@ function ImportModal({ products, platforms, onClose, onImport }) {
     setResult({ imported, skipped, notFound });
     setStep(3);
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-head" }, /* @__PURE__ */ React.createElement("div", { className: "modal-title" }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C"), /* @__PURE__ */ React.createElement("button", { className: "icon-btn", onClick: onClose }, /* @__PURE__ */ React.createElement(X, { size: 18 }))), /* @__PURE__ */ React.createElement("div", { className: "step-indicator" }, ["Data", "Mapping", "Result"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: label, className: "step-chip " + (step === i + 1 ? "active" : step > i + 1 ? "done" : "") }, /* @__PURE__ */ React.createElement("span", { className: "step-num" }, String(i + 1).padStart(2, "0")), /* @__PURE__ */ React.createElement("span", null, label)))), step === 1 && /* @__PURE__ */ React.createElement("div", { className: "modal-body" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "Platform \u0E02\u0E2D\u0E07\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E19\u0E35\u0E49"), /* @__PURE__ */ React.createElement("select", { value: platformId, onChange: (e) => setPlatformId(e.target.value) }, platforms.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name)))),
-    React.createElement("label", { className: "btn btn-outline btn-block", style: { marginTop: 10, cursor: "pointer", textAlign: "center" } }, "เลือกไฟล์ Excel / CSV (.xlsx, .xls, .csv)", React.createElement("input", { type: "file", accept: ".xlsx,.xls,.csv", onChange: pickExcelFile, style: { display: "none" } })),
-    fileMsg && React.createElement("div", { className: "mini-empty", style: { textAlign: "left", padding: "6px 0" } }, fileMsg),
-    React.createElement("div", { style: { fontSize: 12, color: "#68706B", margin: "8px 0" } }, "หรือวางข้อมูลจาก Excel ลงในช่องด้านล่าง"),
-    /* @__PURE__ */ React.createElement("div", { className: "paste-area" }, /* @__PURE__ */ React.createElement(FileSpreadsheet, { size: 22, strokeWidth: 1.6 }), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-head" }, /* @__PURE__ */ React.createElement("div", { className: "modal-title" }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C"), /* @__PURE__ */ React.createElement("button", { className: "icon-btn", onClick: onClose }, /* @__PURE__ */ React.createElement(X, { size: 18 }))), /* @__PURE__ */ React.createElement("div", { className: "step-indicator" }, ["Data", "Mapping", "Result"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: label, className: "step-chip " + (step === i + 1 ? "active" : step > i + 1 ? "done" : "") }, /* @__PURE__ */ React.createElement("span", { className: "step-num" }, String(i + 1).padStart(2, "0")), /* @__PURE__ */ React.createElement("span", null, label)))), step === 1 && /* @__PURE__ */ React.createElement("div", { className: "modal-body" }, /* @__PURE__ */ React.createElement("label", { className: "field" }, /* @__PURE__ */ React.createElement("span", null, "Platform \u0E02\u0E2D\u0E07\u0E2D\u0E2D\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E19\u0E35\u0E49"), /* @__PURE__ */ React.createElement("select", { value: platformId, onChange: (e) => setPlatformId(e.target.value) }, platforms.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name)))), /* @__PURE__ */ React.createElement("div", { className: "paste-area" }, /* @__PURE__ */ React.createElement(FileSpreadsheet, { size: 22, strokeWidth: 1.6 }), /* @__PURE__ */ React.createElement(
     "textarea",
     {
       placeholder: "\u0E27\u0E32\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 (\u0E04\u0E31\u0E48\u0E19\u0E14\u0E49\u0E27\u0E22 Tab \u0E2B\u0E23\u0E37\u0E2D , )\n\u0E41\u0E16\u0E27\u0E41\u0E23\u0E01\u0E40\u0E1B\u0E47\u0E19\u0E2B\u0E31\u0E27\u0E15\u0E32\u0E23\u0E32\u0E07 \u0E40\u0E0A\u0E48\u0E19:\n\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32,\u0E08\u0E33\u0E19\u0E27\u0E19,\u0E23\u0E32\u0E04\u0E32,\u0E04\u0E39\u0E1B\u0E2D\u0E07,\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21,\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\n\n\u0E16\u0E49\u0E32\u0E44\u0E1F\u0E25\u0E4C\u0E08\u0E32\u0E01\u0E41\u0E1E\u0E25\u0E15\u0E1F\u0E2D\u0E23\u0E4C\u0E21\u0E21\u0E35\u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C\u0E04\u0E48\u0E32\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21\u0E08\u0E23\u0E34\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E41\u0E25\u0E49\u0E27 \u0E23\u0E30\u0E1A\u0E1A\u0E08\u0E30\u0E43\u0E0A\u0E49\u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E19\u0E31\u0E49\u0E19\u0E41\u0E17\u0E19\u0E01\u0E32\u0E23\u0E1B\u0E23\u0E30\u0E21\u0E32\u0E13 %",
@@ -1553,9 +1544,225 @@ function ImportModal({ products, platforms, onClose, onImport }) {
     header.map((h, i) => /* @__PURE__ */ React.createElement("option", { key: i, value: i }, "\u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C ", i + 1, ": ", h || "(\u0E27\u0E48\u0E32\u0E07)"))
   )))), !mappingValid && /* @__PURE__ */ React.createElement("div", { className: "mini-empty", style: { padding: "0 0 10px", textAlign: "left" } }, "\u0E01\u0E23\u0E38\u0E13\u0E32\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A \u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32 / \u0E08\u0E33\u0E19\u0E27\u0E19 / \u0E23\u0E32\u0E04\u0E32 \u0E43\u0E2B\u0E49\u0E04\u0E23\u0E1A\u0E01\u0E48\u0E2D\u0E19\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32"), /* @__PURE__ */ React.createElement("div", { className: "preview-table-wrap" }, /* @__PURE__ */ React.createElement("table", { className: "preview-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, header.map((h, i) => /* @__PURE__ */ React.createElement("th", { key: i }, h)))), /* @__PURE__ */ React.createElement("tbody", null, dataRows.slice(0, 5).map((r, i) => /* @__PURE__ */ React.createElement("tr", { key: i }, r.map((c, j) => /* @__PURE__ */ React.createElement("td", { key: j }, c))))))), /* @__PURE__ */ React.createElement("div", { className: "modal-actions" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: () => setStep(1) }, "\u0E22\u0E49\u0E2D\u0E19\u0E01\u0E25\u0E31\u0E1A"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", disabled: !mappingValid, onClick: runImport }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"))), step === 3 && result && /* @__PURE__ */ React.createElement("div", { className: "modal-body import-result" }, /* @__PURE__ */ React.createElement("div", { className: "result-icon" }, /* @__PURE__ */ React.createElement(Check, { size: 30, strokeWidth: 2.4 })), /* @__PURE__ */ React.createElement("div", { className: "result-title" }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08"), /* @__PURE__ */ React.createElement("div", { className: "result-line" }, "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32 ", result.imported, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), result.skipped > 0 && /* @__PURE__ */ React.createElement("div", { className: "result-line muted" }, "\u0E02\u0E49\u0E32\u0E21 ", result.skipped, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), result.notFound > 0 && /* @__PURE__ */ React.createElement("div", { className: "result-line muted" }, "\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E44\u0E21\u0E48\u0E1E\u0E1A ", result.notFound, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), /* @__PURE__ */ React.createElement("div", { className: "modal-actions" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-ghost", onClick: onClose }, "\u0E01\u0E25\u0E31\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E2B\u0E25\u0E31\u0E01"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: onClose }, "\u0E14\u0E39\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E02\u0E32\u0E22")))));
 }
+const nzp = (x) => String(x || "").toUpperCase().replace(/[\u0E48-\u0E4B]/g, "").replace(/[^A-Z0-9\u0E00-\u0E7F]/g, "");
+function guessFileCols(headers) {
+  const g = (...res) => { for (const re of res) { const i = headers.findIndex((h) => re.test(h)); if (i >= 0) return i; } return -1; };
+  return {
+    order: g(ORDER_RE),
+    name: g(/^(ชื่อสินค้า|product\s*name|item\s*name)$/i, /ชื่อสินค้า|product\s*name/i),
+    qty: g(/^(จำนวน|quantity|qty)$/i, /^จำนวน(?!.*(คืน|ส่งคืน))/i, /^quantity/i),
+    price: g(/^(ราคาขาย|deal\s*price|discounted\s*price|ราคาหลังส่วนลด)$/i, /^ราคาขาย(?!สุทธิ)/, /deal\s*price|discounted\s*price/i, /^ราคา(?!ตั้งต้น)/),
+    variation: g(/ชื่อตัวเลือก|variation\s*name|ตัวเลือกสินค้า/i),
+    sku: g(/เลขอ้างอิง\s*sku(?!\s*หลัก)/i, /^sku\s*reference/i, /^sku$/i),
+    time: g(/วันที่ทำการสั่งซื้อ|วันที่สั่งซื้อ|order\s*creation\s*date|order\s*date|create\s*time/i),
+    customer: g(/ชื่อผู้ใช้|username/i),
+    payment: g(/ช่องทางการชำระเงิน(?!.*รายละเอียด)|payment\s*method(?!.*detail)/i, /ช่องทางการชำระเงิน|payment\s*method/i),
+    status: g(/สถานะการสั่งซื้อ|สถานะคำสั่งซื้อ|order\s*status/i),
+    coupon: -1,
+    fee: -1
+  };
+}
+function parseFileTime(v) {
+  const s = String(v || "").trim();
+  const p2 = (n) => String(n).padStart(2, "0");
+  let m = s.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/);
+  let y, mo, d, h, mi, hasTime = true;
+  if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; h = +m[4]; mi = +m[5]; }
+  else {
+    m = s.match(/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+    if (!m) {
+      m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!m) return { iso: "", hasTime: false };
+      y = +m[1]; mo = +m[2]; d = +m[3]; h = 12; mi = 0; hasTime = false;
+    } else {
+      d = +m[1]; mo = +m[2]; y = +m[3];
+      hasTime = m[4] != null;
+      h = hasTime ? +m[4] : 12;
+      mi = hasTime ? +m[5] : 0;
+    }
+  }
+  if (y > 2400) y -= 543;
+  const dt = new Date(y + "-" + p2(mo) + "-" + p2(d) + "T" + p2(h) + ":" + p2(mi) + ":00+07:00");
+  return isNaN(dt.getTime()) ? { iso: "", hasTime: false } : { iso: dt.toISOString(), hasTime };
+}
+function normalizePayment(txt) {
+  const s = String(txt || "").trim();
+  if (!s) return "";
+  const keys = [[/เครดิต|เดบิต|credit|debit/i, "บัตรเครดิต/บัตรเดบิต"], [/shopee\s*pay/i, "ShopeePay"], [/ปลายทาง|\bcod\b|cash\s*on/i, "เก็บเงินปลายทาง (COD)"], [/promptpay|พร้อมเพย์|qr/i, "QR PromptPay"], [/spaylater|ผ่อน|installment/i, "ผ่อนชำระ"], [/โอน|banking|ธนาคาร|bank/i, "โอนผ่านธนาคาร"]];
+  const hit = keys.find(([re]) => re.test(s));
+  return hit ? hit[1] : s.slice(0, 40);
+}
+function matchProduct(products, name, variation, sku) {
+  const skuKey = nzp(sku);
+  if (skuKey) {
+    const bySku = products.find((p) => nzp(p.sku) === skuKey);
+    if (bySku) return bySku.id;
+  }
+  const combined = nzp(name + variation), only = nzp(name);
+  let exact = null, best = null, bestScore = 0, tie = false;
+  products.forEach((p) => {
+    const keys = [p.name, ...String(p.aliases || "").split("\n")].map(nzp).filter(Boolean);
+    if (keys.some((k) => k === combined || k === only)) { exact = exact || p; return; }
+    let score = 0;
+    keys.forEach((k) => {
+      if (k.length >= 6 && combined.includes(k)) score = Math.max(score, k.length);
+      if (only.length >= 6 && k.includes(only)) score = Math.max(score, only.length);
+    });
+    if (score > bestScore) { best = p; bestScore = score; tie = false; }
+    else if (score > 0 && score === bestScore && best && best.id !== p.id) tie = true;
+  });
+  if (exact) return exact.id;
+  return best && !tie ? best.id : "";
+}
+function buildFileImportPlan({ data, map, products, sales, pick, skipCancelled }) {
+  const num = (v) => { const x = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, "")); return isNaN(x) ? 0 : x; };
+  const cell = (r, i) => i >= 0 ? String(r[i] ?? "").trim() : "";
+  const existing = new Set(sales.map((s) => String(s.orderNo || "").trim().toUpperCase()).filter(Boolean));
+  const byNo = new Map();
+  data.rows.slice(data.hi + 1).forEach((r) => {
+    const no = cell(r, map.order).replace(/[\s"'=]/g, "").toUpperCase();
+    if (!no || !cell(r, map.name)) return;
+    if (!byNo.has(no)) byNo.set(no, []);
+    byNo.get(no).push(r);
+  });
+  const out = { orders: [], total: byNo.size, existing: 0, cancelled: 0, unmatchedOrders: 0, unmatched: [] };
+  const um = new Map();
+  byNo.forEach((rows, no) => {
+    if (existing.has(no)) { out.existing++; return; }
+    if (skipCancelled && /ยกเลิก|cancel/i.test(cell(rows[0], map.status))) { out.cancelled++; return; }
+    let missing = false;
+    const items = [];
+    rows.forEach((r) => {
+      const qty = num(cell(r, map.qty));
+      if (qty <= 0) return;
+      const name = cell(r, map.name), variation = cell(r, map.variation);
+      const key = nzp(name + variation);
+      const auto = matchProduct(products, name, variation, cell(r, map.sku));
+      const productId = auto || pick[key] || "";
+      if (!auto) {
+        const e = um.get(key) || { key, name: name + (variation ? " [" + variation + "]" : ""), count: 0 };
+        e.count++;
+        um.set(key, e);
+      }
+      if (!productId) missing = true;
+      items.push({ productId, name, variation, qty, price: num(cell(r, map.price)) });
+    });
+    if (items.length === 0) return;
+    if (missing) { out.unmatchedOrders++; return; }
+    out.orders.push({ no, rows, items });
+  });
+  out.unmatched = [...um.values()].sort((a, b) => b.count - a.count);
+  return out;
+}
+function OrderFileImport({ products, platforms, sales, onClose, onImport, onLearn }) {
+  const [platformId, setPlatformId] = useState((platforms.find((p) => /shopee/i.test(p.name)) || platforms[0] || {}).id || "");
+  const [data, setData] = useState(null);
+  const [map, setMap] = useState(null);
+  const [skipCancelled, setSkipCancelled] = useState(true);
+  const [deductStock, setDeductStock] = useState(true);
+  const [pick, setPick] = useState({});
+  const [showMore, setShowMore] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [result, setResult] = useState(null);
+  const platform = platforms.find((p) => p.id === platformId);
+  const mapOk = !!map && map.order >= 0 && map.name >= 0 && map.qty >= 0 && map.price >= 0;
+  const plan = useMemo(() => data && mapOk ? buildFileImportPlan({ data, map, products, sales, pick, skipCancelled }) : null, [data, map, mapOk, products, sales, pick, skipCancelled]);
+  async function onFile(e) {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true); setMsg(""); setResult(null); setPick({});
+    try {
+      const d = await readReportFile(f);
+      const headers = (d.rows[d.hi] || []).map((h) => String(h).trim());
+      setMap(guessFileCols(headers));
+      setData({ ...d, headers });
+    } catch (err) { setMsg("อ่านไฟล์ไม่สำเร็จ (ไฟล์ .xlsx ต้องต่ออินเทอร์เน็ตในครั้งแรก หรือบันทึกเป็น .csv แล้วลองใหม่)"); }
+    setBusy(false);
+  }
+  function doImport() {
+    if (!plan || !platform || plan.orders.length === 0) return;
+    const num = (v) => { const x = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, "")); return isNaN(x) ? 0 : x; };
+    const r2 = (n) => Math.round((n || 0) * 100) / 100;
+    const now = new Date().toISOString();
+    const newSales = [];
+    const stockDelta = {};
+    plan.orders.forEach((o) => {
+      const first = o.rows[0];
+      const couponTotal = map.coupon >= 0 ? Math.abs(num(first[map.coupon])) : 0;
+      const feeTotal = map.fee >= 0 ? Math.abs(num(first[map.fee])) : null;
+      const w = (it) => it.price * it.qty;
+      const cs = allocTo(o.items, couponTotal, w);
+      const fs = feeTotal != null ? allocTo(o.items, feeTotal, w) : o.items.map((it) => r2(it.price * it.qty * (platform.feePercent || 0) / 100));
+      const tm = parseFileTime(map.time >= 0 ? first[map.time] : "");
+      const oid = uid();
+      const customer = map.customer >= 0 ? String(first[map.customer] ?? "").trim() : "";
+      const pay = map.payment >= 0 ? normalizePayment(first[map.payment]) : "";
+      o.items.forEach((it, i) => {
+        const p = products.find((x) => x.id === it.productId);
+        newSales.push({ id: uid(), orderId: oid, orderNo: o.no, customer: customer || void 0, payment: pay || void 0, orderAt: tm.hasTime ? tm.iso : void 0, createdAt: now, productId: it.productId, platformId, quantity: it.qty, price: it.price, coupon: cs[i], fee: fs[i], otherExpense: 0, unitCost: p ? p.cost || 0 : 0, date: tm.iso || now });
+        stockDelta[it.productId] = (stockDelta[it.productId] || 0) + it.qty;
+      });
+    });
+    onImport(newSales, deductStock ? stockDelta : {});
+    plan.unmatched.forEach((u) => { if (pick[u.key] && onLearn) onLearn(pick[u.key], u.name); });
+    setResult({ orders: plan.orders.length, rows: newSales.length });
+  }
+  const sel = (label, key, required) => React.createElement("label", { className: "field", key },
+    React.createElement("span", null, label + (required ? " *" : "")),
+    React.createElement("select", { value: map[key], onChange: (e) => setMap({ ...map, [key]: parseInt(e.target.value, 10) }) },
+      React.createElement("option", { value: -1 }, required ? "- เลือกคอลัมน์ -" : "- ไม่ใช้ -"),
+      data.headers.map((h, i) => h ? React.createElement("option", { key: i, value: i }, h) : null)));
+  const line = (a, b, red) => React.createElement("div", { key: a, style: { display: "flex", justifyContent: "space-between", fontSize: 13, padding: "2px 0", color: red ? "#B42318" : void 0 } }, React.createElement("span", null, a), React.createElement("span", { style: { fontWeight: 700 } }, b));
+  const sortedProducts = [...products].sort((a, b) => String(a.name).localeCompare(String(b.name), "th"));
+  return React.createElement("div", { className: "modal-overlay", onClick: onClose }, React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation() },
+    React.createElement("div", { className: "modal-head" },
+      React.createElement("div", { className: "modal-title" }, "นำเข้าไฟล์ออเดอร์ (Excel/CSV)"),
+      React.createElement("button", { type: "button", className: "icon-btn", onClick: onClose }, React.createElement(X, { size: 18 }))),
+    result ? React.createElement("div", { className: "modal-body import-result" },
+      React.createElement("div", { className: "result-icon" }, React.createElement(Check, { size: 30, strokeWidth: 2.4 })),
+      React.createElement("div", { className: "result-title" }, "นำเข้าสำเร็จ"),
+      React.createElement("div", { className: "result-line" }, result.orders + " ออเดอร์ (" + result.rows + " รายการสินค้า)"),
+      React.createElement("div", { className: "result-line muted" }, "ค่าธรรมเนียมที่ใส่คือค่าประมาณ ปรับให้ตรงจริงได้ที่ ตรวจเช็ค > นำเข้ารายงาน"),
+      React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 12 }, onClick: onClose }, "ปิด")) : React.createElement("div", { className: "modal-body" },
+      React.createElement("div", { style: { fontSize: 12.5, color: "#68706B", marginBottom: 8 } }, "ใช้ไฟล์ออเดอร์ที่ส่งออกจาก Seller Center (.xlsx หรือ .csv) แอปเดาคอลัมน์ให้ ตรวจแล้วแก้ได้ ข้ามออเดอร์ที่เลขออเดอร์มีอยู่แล้วให้อัตโนมัติ"),
+      React.createElement("label", { className: "field" }, React.createElement("span", null, "แพลตฟอร์มของไฟล์นี้"),
+        React.createElement("select", { value: platformId, onChange: (e) => setPlatformId(e.target.value) }, platforms.map((p) => React.createElement("option", { key: p.id, value: p.id }, p.name)))),
+      React.createElement("label", { className: "btn btn-outline btn-block", style: { cursor: "pointer", textAlign: "center", marginTop: 8 } }, busy ? "กำลังอ่านไฟล์…" : data ? "เลือกไฟล์ใหม่" : "เลือกไฟล์ .xlsx / .csv", React.createElement("input", { type: "file", accept: ".xlsx,.xls,.csv", onChange: onFile, style: { display: "none" } })),
+      msg && React.createElement("div", { style: { fontSize: 12.5, color: "#B42318", margin: "8px 0" } }, msg),
+      data && map && React.createElement("div", { style: { marginTop: 10 } },
+        React.createElement("div", { style: { fontSize: 12, color: "#68706B", marginBottom: 6 } }, "ตรวจว่าแอปเดาคอลัมน์ถูกไหม (" + (data.rows.length - data.hi - 1) + " แถว" + (data.sheet ? " · ชีต " + data.sheet : "") + ")"),
+        React.createElement("div", { className: "form-grid" }, sel("เลขออเดอร์", "order", true), sel("ชื่อสินค้า", "name", true), sel("จำนวน", "qty", true), sel("ราคาขายต่อชิ้น", "price", true)),
+        !mapOk && React.createElement("div", { style: { fontSize: 12.5, color: "#B42318", marginBottom: 8 } }, "เลือกคอลัมน์ที่มี * ให้ครบก่อน"),
+        React.createElement("button", { type: "button", className: "btn btn-ghost btn-block", onClick: () => setShowMore(!showMore) }, showMore ? "ซ่อนคอลัมน์เพิ่มเติม" : "คอลัมน์เพิ่มเติม (SKU, วันที่-เวลา, ลูกค้า, วิธีชำระเงิน ฯลฯ)"),
+        showMore && React.createElement("div", { className: "form-grid", style: { marginTop: 8 } },
+          sel("SKU (ใช้จับคู่สินค้า)", "sku", false), sel("ชื่อตัวเลือกสินค้า", "variation", false), sel("วันที่-เวลาสั่งซื้อ", "time", false), sel("ชื่อผู้ใช้ลูกค้า", "customer", false), sel("ช่องทางการชำระเงิน", "payment", false), sel("สถานะออเดอร์", "status", false),
+          sel("คูปองที่ผู้ขายออกเอง (ค่ารวมต่อออเดอร์ ใช้ค่าจากแถวแรกของออเดอร์)", "coupon", false), sel("ค่าธรรมเนียมรวม (ค่ารวมต่อออเดอร์ ใช้ค่าจากแถวแรกของออเดอร์)", "fee", false))),
+      plan && React.createElement("div", { style: { marginTop: 12, borderTop: "1px solid #EEF0ED", paddingTop: 10 } },
+        line("ออเดอร์ในไฟล์", plan.total + " ออเดอร์"),
+        line("พร้อมนำเข้า", plan.orders.length + " ออเดอร์"),
+        line("ข้าม: เลขออเดอร์มีในแอปแล้ว", plan.existing + " ออเดอร์"),
+        plan.cancelled > 0 && line("ข้าม: ออเดอร์ที่ยกเลิก", plan.cancelled + " ออเดอร์"),
+        plan.unmatchedOrders > 0 && line("ข้าม: มีสินค้าที่ยังจับคู่ไม่ได้", plan.unmatchedOrders + " ออเดอร์", true),
+        plan.unmatched.length > 0 && React.createElement("div", { style: { marginTop: 10 } },
+          React.createElement("div", { style: { fontWeight: 700, fontSize: 13, marginBottom: 4 } }, "สินค้าที่แอปจับคู่เองไม่ได้ (" + plan.unmatched.length + ") เลือกสินค้าให้ แอปจะจำชื่อไว้ใช้ครั้งต่อไป"),
+          plan.unmatched.slice(0, 25).map((u) => React.createElement("div", { key: u.key, style: { padding: "6px 0", borderTop: "1px solid #EEF0ED" } },
+            React.createElement("div", { style: { fontSize: 12.5, wordBreak: "break-word", marginBottom: 4 } }, u.name + " (" + u.count + " รายการ)"),
+            React.createElement("select", { value: pick[u.key] || "", onChange: (e) => setPick({ ...pick, [u.key]: e.target.value }), style: { width: "100%", fontSize: 13, padding: "6px 8px", borderRadius: 8 } },
+              React.createElement("option", { value: "" }, "- ข้าม (ไม่นำเข้าออเดอร์ที่มีสินค้านี้) -"),
+              sortedProducts.map((p) => React.createElement("option", { key: p.id, value: p.id }, p.name))))),
+          plan.unmatched.length > 25 && React.createElement("div", { style: { fontSize: 12, color: "#99A09B" } }, "…และอีก " + (plan.unmatched.length - 25) + " รายการ (นำเข้ารอบนี้ก่อน แล้วนำเข้าไฟล์เดิมซ้ำได้ เพราะออเดอร์ที่นำเข้าแล้วจะถูกข้าม)")),
+        React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, marginTop: 10 } }, React.createElement("input", { type: "checkbox", checked: skipCancelled, onChange: (e) => setSkipCancelled(e.target.checked) }), "ข้ามออเดอร์ที่ยกเลิก (ดูจากคอลัมน์สถานะ)"),
+        React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, marginTop: 6 } }, React.createElement("input", { type: "checkbox", checked: deductStock, onChange: (e) => setDeductStock(e.target.checked) }), "หักสต็อกตามจำนวนที่ขาย (ไม่ติ๊กถ้าเป็นออเดอร์ย้อนหลังที่หักสต็อกไปแล้ว)"),
+        React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "ค่าธรรมเนียมใช้ " + (platform ? platform.feePercent : 0) + "% ของแพลตฟอร์ม" + (map && map.fee >= 0 ? " หรือค่าจากคอลัมน์ที่เลือก" : "") + " เป็นค่าประมาณ ปรับให้ตรงจริงได้ที่ ตรวจเช็ค > นำเข้ารายงาน"),
+        React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 12 }, disabled: plan.orders.length === 0 || !platform, onClick: doImport }, "นำเข้า " + plan.orders.length + " ออเดอร์")),
+      React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 10 }, onClick: onClose }, "ปิด"))));
+}
 function SalesPage({ products, platforms, sales, onAddSale, onImport, onDeleteSale, onEditSale, onSetStatus, onLearnAlias, onPlatformsChange, expenses, onExpensesChange, onRestore }) {
   const [showImport, setShowImport] = useState(false);
-  return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(Header, { title: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E02\u0E32\u0E22", subtitle: fmtNumber(sales.length) + " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14", lowStockCount: 0 }), /* @__PURE__ */ React.createElement("div", { className: "sales-toolbar" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-block", onClick: () => setShowImport(true) }, /* @__PURE__ */ React.createElement(Upload, { size: 16 }), " Import Orders")), /* @__PURE__ */ React.createElement(QuickSaleForm, { products, platforms, sales, onSubmit: onAddSale, onLearn: onLearnAlias }), /* @__PURE__ */ React.createElement(SalesHistory, { sales, products, platforms, onDelete: onDeleteSale, onEdit: onEditSale, onStatus: onSetStatus }), /* @__PURE__ */ React.createElement(PlatformManager, { platforms, sales, onChange: onPlatformsChange }), /* @__PURE__ */ React.createElement(ExpenseManager, { expenses: expenses || [], onChange: onExpensesChange }), /* @__PURE__ */ React.createElement(DataBackup, { products, sales, platforms, expenses: expenses || [], onRestore }), showImport && /* @__PURE__ */ React.createElement(
+  const [showFileImport, setShowFileImport] = useState(false);
+  return /* @__PURE__ */ React.createElement("div", { className: "page-inner" }, /* @__PURE__ */ React.createElement(Header, { title: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E02\u0E32\u0E22", subtitle: fmtNumber(sales.length) + " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14", lowStockCount: 0 }), /* @__PURE__ */ React.createElement("div", { className: "sales-toolbar", style: { flexDirection: "column", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", onClick: () => setShowFileImport(true) }, /* @__PURE__ */ React.createElement(FileSpreadsheet, { size: 16 }), " นำเข้าไฟล์ Excel/CSV (Shopee)"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-block", onClick: () => setShowImport(true) }, /* @__PURE__ */ React.createElement(Upload, { size: 16 }), " Import Orders (วางข้อมูล)")), /* @__PURE__ */ React.createElement(QuickSaleForm, { products, platforms, sales, onSubmit: onAddSale, onLearn: onLearnAlias }), /* @__PURE__ */ React.createElement(SalesHistory, { sales, products, platforms, onDelete: onDeleteSale, onEdit: onEditSale, onStatus: onSetStatus }), /* @__PURE__ */ React.createElement(PlatformManager, { platforms, sales, onChange: onPlatformsChange }), /* @__PURE__ */ React.createElement(ExpenseManager, { expenses: expenses || [], onChange: onExpensesChange }), /* @__PURE__ */ React.createElement(DataBackup, { products, sales, platforms, expenses: expenses || [], onRestore }), showFileImport && React.createElement(OrderFileImport, { products, platforms, sales, onClose: () => setShowFileImport(false), onImport, onLearn: onLearnAlias }), showImport && /* @__PURE__ */ React.createElement(
     ImportModal,
     {
       products,
@@ -1564,7 +1771,8 @@ function SalesPage({ products, platforms, sales, onAddSale, onImport, onDeleteSa
       onImport
     }
   ));
-}function compressImage(file, maxSide = 240, quality = 0.72) {
+}
+function compressImage(file, maxSide = 240, quality = 0.72) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -1779,6 +1987,42 @@ function ProductsPage({ products, sales, onSave, onDelete, onMerge }) {
     showForm && React.createElement(ProductForm, { initial: editing, products, onClose: () => setShowForm(false), onSave: (p) => { onSave(p); setShowForm(false); } }),
     merging && React.createElement(MergeModal, { group: merging, sales, onClose: () => setMerging(null), onConfirm: (keepId) => { onMerge(keepId, merging.filter((p) => p.id !== keepId).map((p) => p.id)); setMerging(null); } }));
 }
+const OTHER_DEFAULTS = ["ค่ากล่อง", "ค่าเทปกาว", "ค่าใบปะหน้า", "ค่าบับเบิ้ล", "ค่าถุง"];
+function OtherCostSummary({ sales }) {
+  const info = useMemo(() => {
+    const map = Object.create(null), all = /* @__PURE__ */ new Set(), withCost = /* @__PURE__ */ new Set();
+    let total = 0, rest = 0;
+    sales.forEach((s) => {
+      if (s.status) return;
+      const key = s.orderId || s.id;
+      all.add(key);
+      const other = s.otherExpense || 0;
+      if (other <= 0) return;
+      withCost.add(key);
+      let itemized = 0;
+      (s.otherItems || []).forEach((it) => {
+        const name = String(it.name || "").trim() || "ไม่ระบุ";
+        const k = name.toLowerCase();
+        const r = map[k] || (map[k] = { name, total: 0 });
+        r.total += it.amount || 0;
+        itemized += it.amount || 0;
+      });
+      rest += Math.max(0, other - itemized);
+      total += other;
+    });
+    const rows = Object.values(map).sort((a, b) => b.total - a.total);
+    if (rest > 0.004) rows.push({ name: "อื่นๆ (ไม่ได้ระบุรายการ)", total: Math.round(rest * 100) / 100 });
+    return { rows, total, orders: all.size, withCost: withCost.size };
+  }, [sales]);
+  return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
+    React.createElement("div", { className: "section-title", style: { marginBottom: 8 } }, "รายจ่ายอื่นๆ ต่อออเดอร์ (ค่ากล่อง เทป ใบปะหน้า ฯลฯ)"),
+    info.total <= 0 ? React.createElement("div", { className: "mini-empty" }, "ยังไม่มีข้อมูลในช่วงนี้ เพิ่มรายการได้ที่หน้า บันทึก ตรงช่องรายจ่ายอื่นๆ") : React.createElement("div", null,
+      info.rows.map((r) => React.createElement("div", { key: r.name, style: { display: "flex", justifyContent: "space-between", gap: 8, padding: "4px 0", fontSize: 13.5 } },
+        React.createElement("span", { style: { minWidth: 0, wordBreak: "break-word" } }, r.name),
+        React.createElement("span", { style: { fontWeight: 700, flexShrink: 0 } }, fmtCurrency(r.total) + " · " + Math.round(r.total / info.total * 1000) / 10 + "%"))),
+      React.createElement("div", { style: { display: "flex", justifyContent: "space-between", borderTop: "1px solid #E1E5E0", marginTop: 6, paddingTop: 8, fontWeight: 800 } }, React.createElement("span", null, "รวม"), React.createElement("span", null, fmtCurrency(info.total))),
+      React.createElement("div", { style: { fontSize: 12, color: "#68706B", marginTop: 8 } }, "เฉลี่ย " + fmtCurrency(info.total / Math.max(1, info.orders)) + " ต่อออเดอร์ (จาก " + fmtNumber(info.orders) + " ออเดอร์ มีบันทึกรายจ่ายอื่น " + fmtNumber(info.withCost) + " ออเดอร์) นับรวมในกำไรรายวันแล้ว")));
+}
 const PAY_DEFAULTS = ["บัตรเครดิต/บัตรเดบิต", "ShopeePay", "QR PromptPay", "โอนผ่านธนาคาร", "เก็บเงินปลายทาง (COD)", "ผ่อนชำระ", "เงินสด"];
 const PAY_COLORS = ["#173D35", "#B8862F", "#EE4D2D", "#1877F2", "#06C755", "#8E44AD", "#16A085", "#E67E22"];
 function PurchaseTimeChart({ sales, products, platforms }) {
@@ -1931,7 +2175,7 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
       customRange,
       setCustomRange: (c) => setDateState({ ...dateState, customRange: c })
     }
-  ), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E2A\u0E23\u0E38\u0E1B\u0E01\u0E32\u0E23\u0E40\u0E07\u0E34\u0E19"), /* @__PURE__ */ React.createElement("div", { className: "finance-breakdown" }, /* @__PURE__ */ React.createElement("div", { className: "fb-row" }, /* @__PURE__ */ React.createElement("span", null, "Gross Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.gross))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Coupon"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.coupon))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Platform Fee"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.fee))), /* @__PURE__ */ React.createElement("div", { className: "fb-row strong" }, /* @__PURE__ */ React.createElement("span", null, "Net Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.netRevenue))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Cost"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.cost))), /* @__PURE__ */ React.createElement("div", { className: "fb-row profit" }, /* @__PURE__ */ React.createElement("span", null, "Net Profit"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.profit))))), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E40\u0E1B\u0E23\u0E35\u0E22\u0E1A\u0E40\u0E17\u0E35\u0E22\u0E1A\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E32\u0E07"), platformRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "analysis-table-wrap" }, /* @__PURE__ */ React.createElement("table", { className: "analysis-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Platform"), /* @__PURE__ */ React.createElement("th", null, "ออเดอร์"), /* @__PURE__ */ React.createElement("th", null, "\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("th", null, "\u0E01\u0E33\u0E44\u0E23"), /* @__PURE__ */ React.createElement("th", null, "Margin"))), /* @__PURE__ */ React.createElement("tbody", null, platformRows.map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "table-dot", style: { background: r.color } }), r.name), /* @__PURE__ */ React.createElement("td", null, fmtNumber(r.orders)), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.gross)), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.profit)), /* @__PURE__ */ React.createElement("td", null, r.margin.toFixed(1), "%"))))))), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "Margin Analysis \u0E15\u0E48\u0E2D\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), productRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "margin-list" }, [...productRows].map((r) => ({ ...r, _m: r.gross > 0 ? r.profit / r.gross * 100 : -999 })).sort((a, b) => b._m - a._m).map((r) => {
+  ), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E2A\u0E23\u0E38\u0E1B\u0E01\u0E32\u0E23\u0E40\u0E07\u0E34\u0E19"), /* @__PURE__ */ React.createElement("div", { className: "finance-breakdown" }, /* @__PURE__ */ React.createElement("div", { className: "fb-row" }, /* @__PURE__ */ React.createElement("span", null, "Gross Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.gross))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Coupon"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.coupon))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Platform Fee"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.fee))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, React.createElement("span", null, "รายจ่ายอื่นๆ (กล่อง/เทป ฯลฯ)"), React.createElement("span", null, "-", fmtCurrency(agg.other))), /* @__PURE__ */ React.createElement("div", { className: "fb-row strong" }, /* @__PURE__ */ React.createElement("span", null, "Net Revenue"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.netRevenue))), /* @__PURE__ */ React.createElement("div", { className: "fb-row muted" }, /* @__PURE__ */ React.createElement("span", null, "Cost"), /* @__PURE__ */ React.createElement("span", null, "-", fmtCurrency(agg.cost))), /* @__PURE__ */ React.createElement("div", { className: "fb-row profit" }, /* @__PURE__ */ React.createElement("span", null, "Net Profit"), /* @__PURE__ */ React.createElement("span", null, fmtCurrency(agg.profit))))), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "\u0E40\u0E1B\u0E23\u0E35\u0E22\u0E1A\u0E40\u0E17\u0E35\u0E22\u0E1A\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E32\u0E07"), platformRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "analysis-table-wrap" }, /* @__PURE__ */ React.createElement("table", { className: "analysis-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Platform"), /* @__PURE__ */ React.createElement("th", null, "ออเดอร์"), /* @__PURE__ */ React.createElement("th", null, "\u0E22\u0E2D\u0E14\u0E02\u0E32\u0E22"), /* @__PURE__ */ React.createElement("th", null, "\u0E01\u0E33\u0E44\u0E23"), /* @__PURE__ */ React.createElement("th", null, "Margin"))), /* @__PURE__ */ React.createElement("tbody", null, platformRows.map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "table-dot", style: { background: r.color } }), r.name), /* @__PURE__ */ React.createElement("td", null, fmtNumber(r.orders)), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.gross)), /* @__PURE__ */ React.createElement("td", null, fmtCurrency(r.profit)), /* @__PURE__ */ React.createElement("td", null, r.margin.toFixed(1), "%"))))))), /* @__PURE__ */ React.createElement("div", { className: "card section-card" }, /* @__PURE__ */ React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, "Margin Analysis \u0E15\u0E48\u0E2D\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), productRows.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "mini-empty" }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E19\u0E35\u0E49") : /* @__PURE__ */ React.createElement("div", { className: "margin-list" }, [...productRows].map((r) => ({ ...r, _m: r.gross > 0 ? r.profit / r.gross * 100 : -999 })).sort((a, b) => b._m - a._m).map((r) => {
     const margin = r.gross > 0 ? r.profit / r.gross * 100 : 0;
     return /* @__PURE__ */ React.createElement("div", { className: "margin-row", key: r.product.id }, /* @__PURE__ */ React.createElement("div", { className: "margin-name" }, r.product.name, React.createElement("div", { style: { fontSize: 11.5, fontWeight: 400, color: "#68706B" } }, "ยอดขาย " + fmtCurrency(r.gross) + " · กำไร " + fmtCurrency(r.profit))), /* @__PURE__ */ React.createElement("div", { className: "margin-bar-track" }, /* @__PURE__ */ React.createElement(
       "div",
@@ -1940,7 +2184,7 @@ function AnalyticsPage({ sales, products, platforms, dateState, setDateState }) 
         style: { width: Math.max(margin, 2) + "%" }
       }
     )), /* @__PURE__ */ React.createElement("div", { className: "margin-pct" }, margin.toFixed(1), "%"));
-  }))), React.createElement(PurchaseTimeChart, { sales: filteredSales, products, platforms }), React.createElement(PaymentMethodChart, { sales: filteredSales }), /* @__PURE__ */ React.createElement(PlatformFeeReport, { sales, products, platforms }), /* @__PURE__ */ React.createElement(CustomerStats, { sales, products }));
+  }))), React.createElement(OtherCostSummary, { sales: filteredSales }), React.createElement(PurchaseTimeChart, { sales: filteredSales, products, platforms }), React.createElement(PaymentMethodChart, { sales: filteredSales }), /* @__PURE__ */ React.createElement(PlatformFeeReport, { sales, products, platforms }), /* @__PURE__ */ React.createElement(CustomerStats, { sales, products }));
 }
 function PlatformFeeReport({ sales, products, platforms }) {
   const pad = (n) => String(n).padStart(2, "0");
