@@ -442,10 +442,13 @@ function ExpenseBreakdown({ expenses, months }) {
   const grp = Object.create(null);
   months.forEach((key) => expenses.forEach((e) => {
     if (!expenseInMonth(e, key)) return;
-    const k = String(e.name || "").trim().toLowerCase();
-    const g = grp[k] || (grp[k] = { name: String(e.name || "").trim() || "ไม่ระบุ", total: 0, count: 0 });
-    g.total += e.amount;
-    g.count += 1;
+    const parts = e.bill && e.items && e.items.length ? e.items : [{ name: e.name, amount: e.amount }];
+    parts.forEach((it) => {
+      const k = String(it.name || "").trim().toLowerCase();
+      const g = grp[k] || (grp[k] = { name: String(it.name || "").trim() || "ไม่ระบุ", total: 0, count: 0 });
+      g.total += it.amount;
+      g.count += 1;
+    });
   }));
   const rows = Object.values(grp).sort((a, b) => b.total - a.total);
   if (rows.length === 0) return null;
@@ -1281,6 +1284,7 @@ function SlipViewer({ id, name, onClose }) {
     src && React.createElement("a", { className: "btn btn-outline btn-block", style: { marginTop: 10, textAlign: "center", textDecoration: "none" }, href: src, download: "slip-" + name + ".jpg" }, "ดาวน์โหลดสลิป"),
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: onClose }, "ปิด"))));
 }
+const BILL_DEFAULTS = ["ค่ากล่อง", "ค่าเทปกาว", "ค่าใบปะหน้า", "ค่าบับเบิ้ล", "ค่าถุง", "ค่าโฆษณา"];
 function ExpenseManager({ expenses, onChange }) {
   const pad = (n) => String(n).padStart(2, "0");
   const todayY = () => bkkDate(/* @__PURE__ */ new Date());
@@ -1288,8 +1292,9 @@ function ExpenseManager({ expenses, onChange }) {
   const [viewSlip, setViewSlip] = useState(null);
   const [sumMonth, setSumMonth] = useState("all");
   const [busy, setBusy] = useState(false);
+  const [billCustom, setBillCustom] = useState("");
   const when = (e) => e.bill ? new Date(e.date + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "2-digit" }) : (e.recurring ? "ทุกเดือน ตั้งแต่ " : "รายเดือน ") + new Date(e.month + "-01T00:00:00").toLocaleDateString("th-TH", { month: "short", year: "2-digit" });
-  const openNew = (bill) => setEditing({ id: "e" + Date.now().toString(36), isNew: true, bill, name: "", amount: "", date: todayY(), month: todayY().slice(0, 7), recurring: false, slip: false, slipData: null, slipRemoved: false });
+  const openNew = (bill) => setEditing({ id: "e" + Date.now().toString(36), isNew: true, bill, name: "", amount: "", date: todayY(), month: todayY().slice(0, 7), recurring: false, slip: false, slipData: null, slipRemoved: false, items: [] });
   async function pickSlip(ev) {
     const f = ev.target.files && ev.target.files[0];
     ev.target.value = "";
@@ -1299,15 +1304,17 @@ function ExpenseManager({ expenses, onChange }) {
     setBusy(false);
   }
   async function save() {
-    const name = (editing.name || "").trim();
-    const amount = parseFloat(editing.amount) || 0;
+    const itemList = editing.bill ? (editing.items || []).filter((x) => (parseFloat(x.amount) || 0) > 0).map((x) => ({ name: x.name, amount: parseFloat(x.amount) })) : [];
+    if (editing.bill && (editing.items || []).length > 0 && itemList.length === 0) { alert("ใส่จำนวนเงินของรายการที่เลือกด้วย"); return; }
+    const amount = itemList.length ? r2g(itemList.reduce((a, x) => a + x.amount, 0)) : parseFloat(editing.amount) || 0;
+    const name = (editing.name || "").trim() || itemList.map((x) => x.name).join(", ");
     if (!name || amount <= 0 || (editing.bill ? !editing.date : !editing.month)) return;
     const hasSlip = editing.slipData ? true : editing.slipRemoved ? false : editing.slip;
     try {
       if (editing.slipData) await slipPut(editing.id, editing.slipData);
       else if (editing.slipRemoved) await slipDel(editing.id);
     } catch (err) { alert("บันทึกสลิปไม่สำเร็จ"); return; }
-    const item = { id: editing.id, name, amount, bill: !!editing.bill, slip: hasSlip, ...editing.bill ? { date: editing.date, month: editing.date.slice(0, 7) } : { month: editing.month, recurring: !!editing.recurring } };
+    const item = { id: editing.id, name, amount, bill: !!editing.bill, slip: hasSlip, items: itemList.length ? itemList : void 0, ...editing.bill ? { date: editing.date, month: editing.date.slice(0, 7) } : { month: editing.month, recurring: !!editing.recurring } };
     onChange(editing.isNew ? [...expenses, item] : expenses.map((x) => x.id === item.id ? item : x));
     setEditing(null);
   }
@@ -1319,11 +1326,46 @@ function ExpenseManager({ expenses, onChange }) {
   const rows = [...expenses].sort((a, b) => (a.date || a.month + "-01") < (b.date || b.month + "-01") ? 1 : -1);
   const inp = (label, props) => React.createElement("label", { className: "field" }, React.createElement("span", null, label), React.createElement("input", props));
   const bills = expenses.filter((e) => e.bill);
+  const billNames = (() => {
+    const names = [], last = Object.create(null);
+    [...bills].sort((a, b) => a.date < b.date ? 1 : -1).forEach((e) => {
+      (e.items && e.items.length ? e.items : [{ name: e.name, amount: e.amount }]).forEach((i) => {
+        const n = String(i.name || "").trim();
+        if (n && last[n] === void 0) { last[n] = i.amount; names.push(n); }
+      });
+    });
+    return { names, last };
+  })();
+  const chipNames = [...new Set([...BILL_DEFAULTS, ...billNames.names])].slice(0, 14);
+  const editItems = editing && editing.items ? editing.items : [];
+  const editTotal = r2g(editItems.reduce((a, x) => a + (parseFloat(x.amount) || 0), 0));
+  const setItemsE = (arr) => setEditing((x) => ({ ...x, items: arr }));
+  const toggleItemE = (name) => setItemsE(editItems.some((x) => x.name === name) ? editItems.filter((x) => x.name !== name) : [...editItems, { name, amount: "" }]);
+  const addCustomE = () => {
+    const n = billCustom.trim();
+    if (n && !editItems.some((x) => x.name === n)) setItemsE([...editItems, { name: n, amount: "" }]);
+    setBillCustom("");
+  };
+  const itemsBlock = editing && editing.bill ? React.createElement("div", { style: { border: "1px dashed #D9DDD8", borderRadius: 12, padding: 10 } },
+    React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: "#68706B", marginBottom: 8 } }, "รายการที่ซื้อในบิลนี้ (เลือกได้หลายรายการ แล้วใส่ราคาแต่ละอย่าง)"),
+    React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 } }, chipNames.map((n) => {
+      const on = editItems.some((x) => x.name === n);
+      return React.createElement("button", { key: n, type: "button", onClick: () => toggleItemE(n), style: { padding: "6px 12px", borderRadius: 20, border: "1px solid " + (on ? "#0F2B26" : "#E1E5E0"), background: on ? "#0F2B26" : "#F6F7F5", color: on ? "#fff" : "#1C201D", fontSize: 13, fontFamily: "inherit", cursor: "pointer" } }, n);
+    })),
+    editItems.map((it, k) => React.createElement("div", { key: it.name, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } },
+      React.createElement("span", { style: { flex: 1, minWidth: 0, fontSize: 13.5, wordBreak: "break-word" } }, it.name),
+      React.createElement("input", { type: "number", min: "0", step: "any", inputMode: "decimal", placeholder: billNames.last[it.name] !== void 0 ? "ล่าสุด " + billNames.last[it.name] : "บาท", value: it.amount, onChange: (ev) => setItemsE(editItems.map((x, j) => j === k ? { ...x, amount: ev.target.value } : x)), style: { width: 104, padding: "8px 10px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
+      React.createElement("button", { type: "button", className: "icon-btn-sm", "aria-label": "ลบรายการ", onClick: () => setItemsE(editItems.filter((_, j) => j !== k)) }, React.createElement(Trash2, { size: 14 })))),
+    React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
+      React.createElement("input", { value: billCustom, placeholder: "เพิ่มรายการอื่น เช่น ค่าถุงซิป", onChange: (ev) => setBillCustom(ev.target.value), onKeyDown: (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addCustomE(); } }, style: { flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
+      React.createElement("button", { type: "button", className: "btn btn-outline btn-sm", onClick: addCustomE }, "เพิ่ม")),
+    editItems.length > 0 && React.createElement("div", { style: { fontSize: 12.5, color: "#68706B", marginTop: 8 } }, "รวมทั้งบิล " + fmtCurrency(editTotal))) : null;
   const billMonths = [...new Set(bills.map((e) => e.month))].sort().reverse();
-  const nameList = [...new Set(bills.map((e) => e.name.trim()))];
+  const nameList = [...new Set(bills.flatMap((e) => e.items && e.items.length ? e.items.map((i) => i.name.trim()) : [e.name.trim()]))];
   const scope = sumMonth === "all" ? bills : bills.filter((e) => e.month === sumMonth);
-  const grp = {};
-  scope.forEach((e) => { const k = e.name.trim().toLowerCase(); if (!grp[k]) grp[k] = { name: e.name.trim(), count: 0, total: 0 }; grp[k].count += 1; grp[k].total += e.amount; });
+  const grp = Object.create(null);
+  const addGrp = (nm, amt) => { const k = String(nm || "").trim().toLowerCase(); if (!grp[k]) grp[k] = { name: String(nm || "").trim() || "ไม่ระบุ", count: 0, total: 0 }; grp[k].count += 1; grp[k].total += amt; };
+  scope.forEach((e) => { if (e.items && e.items.length) e.items.forEach((i) => addGrp(i.name, i.amount)); else addGrp(e.name, e.amount); });
   const sumRows = Object.values(grp).sort((a, b) => b.total - a.total);
   const grand = sumRows.reduce((a, g) => a + g.total, 0);
   const monthTxt = (m) => new Date(m + "-01T00:00:00").toLocaleDateString("th-TH", { month: "long", year: "numeric" });
@@ -1350,17 +1392,19 @@ function ExpenseManager({ expenses, onChange }) {
       e.slip ? React.createElement("button", { type: "button", onClick: () => setViewSlip(e), style: { padding: 0, border: "none", background: "none", cursor: "pointer", flexShrink: 0 } }, React.createElement(SlipImg, { id: e.id, style: { width: 40, height: 40, objectFit: "cover", borderRadius: 8 } })) : null,
       React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         React.createElement("div", { style: { fontSize: 14, fontWeight: 600 } }, e.name),
+        e.items && e.items.length > 0 && React.createElement("div", { style: { fontSize: 12, color: "#1C201D", wordBreak: "break-word" } }, e.items.map((i) => i.name + " " + fmtCurrency(i.amount)).join(" · ")),
         React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, when(e))),
       React.createElement("span", { style: { fontWeight: 700, fontSize: 14, marginRight: 4 } }, fmtCurrency(e.amount)),
-      React.createElement("button", { className: "icon-btn-sm", "aria-label": "แก้ไข", onClick: () => setEditing({ ...e, amount: String(e.amount), slipData: null, slipRemoved: false }) }, React.createElement(Edit2, { size: 14 })),
+      React.createElement("button", { className: "icon-btn-sm", "aria-label": "แก้ไข", onClick: () => setEditing({ ...e, amount: String(e.amount), slipData: null, slipRemoved: false, items: (e.items || []).map((x) => ({ name: x.name, amount: String(x.amount) })) }) }, React.createElement(Edit2, { size: 14 })),
       React.createElement("button", { className: "icon-btn-sm", "aria-label": "ลบ", onClick: () => remove(e) }, React.createElement(Trash2, { size: 14 })))),
     React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "รายจ่าย/บิลทั้งหมดหักรวมเป็นยอดทั้งเดือนในช่วง เดือนนี้ / เดือนที่แล้ว (ไม่หักในรายวัน) / สลิปเก็บในเครื่องนี้ (ไม่ขึ้นออนไลน์)"),
     viewSlip && React.createElement(SlipViewer, { id: viewSlip.id, name: viewSlip.name, onClose: () => setViewSlip(null) }),
     editing && React.createElement("div", { className: "modal-overlay", onClick: () => setEditing(null) }, React.createElement("div", { className: "modal", onClick: (ev) => ev.stopPropagation() }, React.createElement("div", { className: "modal-body" },
       React.createElement("div", { className: "section-title", style: { marginBottom: 12 } }, (editing.isNew ? "เพิ่ม" : "แก้ไข") + (editing.bill ? "บิล" : "รายจ่ายรายเดือน")),
       React.createElement("div", { className: "form-grid" },
-        inp("รายการ", { list: "bill-names", value: editing.name, placeholder: "เช่น ค่าสินค้าล็อตใหม่", onChange: (ev) => setEditing({ ...editing, name: ev.target.value }) }),
-        inp(editing.bill ? "จำนวนเงิน (บาท)" : "จำนวนเงิน (บาท/เดือน)", { type: "number", min: "0", step: "any", inputMode: "decimal", value: editing.amount, onChange: (ev) => setEditing({ ...editing, amount: ev.target.value }) }),
+        itemsBlock,
+        inp(editing.bill ? "ชื่อบิล / ร้าน (ใส่เองถ้าไม่เลือกรายการด้านบน)" : "รายการ", { list: "bill-names", value: editing.name, placeholder: editing.bill ? "เช่น ร้านวัสดุ หรือ ค่าสินค้าล็อตใหม่" : "เช่น ค่าเช่า", onChange: (ev) => setEditing({ ...editing, name: ev.target.value }) }),
+        editing.bill && editItems.length > 0 ? React.createElement("div", { style: { fontSize: 14, fontWeight: 700 } }, "รวมทั้งบิล " + fmtCurrency(editTotal)) : inp(editing.bill ? "จำนวนเงิน (บาท)" : "จำนวนเงิน (บาท/เดือน)", { type: "number", min: "0", step: "any", inputMode: "decimal", value: editing.amount, onChange: (ev) => setEditing({ ...editing, amount: ev.target.value }) }),
         editing.bill ? inp("วันที่จ่าย", { type: "date", value: editing.date, onChange: (ev) => setEditing({ ...editing, date: ev.target.value }) }) : inp("เดือน", { type: "month", value: editing.month, onChange: (ev) => setEditing({ ...editing, month: ev.target.value }) }),
         !editing.bill && React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 14 } }, React.createElement("input", { type: "checkbox", checked: !!editing.recurring, onChange: (ev) => setEditing({ ...editing, recurring: ev.target.checked }) }), "เกิดซ้ำทุกเดือน (ตั้งแต่เดือนนี้เป็นต้นไป)"),
         React.createElement("div", { className: "field" }, React.createElement("span", null, "สลิปการจ่ายเงิน"),
@@ -1399,10 +1443,10 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
       const mod = await import("https://esm.sh/xlsx@0.18.5");
       const X = mod.utils ? mod : mod.default;
       const wb = X.utils.book_new();
-      const bills = [...expenses].filter((e) => e.bill).sort((a, b) => a.date < b.date ? -1 : 1).map((e) => [e.date, e.name, e.amount, e.slip ? "มี" : "-"]);
+      const bills = [...expenses].filter((e) => e.bill).sort((a, b) => a.date < b.date ? -1 : 1).map((e) => [e.date, e.name, e.amount, e.slip ? "มี" : "-", (e.items || []).map((i) => i.name + " " + i.amount).join(", ")]);
       const monthly = expenses.filter((e) => !e.bill).map((e) => [e.name, e.amount, e.month, e.recurring ? "ทุกเดือน" : "เดือนเดียว"]);
       X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(salesTable()), "รายการขาย");
-      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["วันที่จ่าย", "รายการ", "จำนวนเงิน", "สลิป"], ...bills]), "บิลรายจ่าย");
+      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["วันที่จ่าย", "รายการ", "จำนวนเงิน", "สลิป", "รายการย่อยในบิล"], ...bills]), "บิลรายจ่าย");
       X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["รายการ", "จำนวนเงิน/เดือน", "เดือน", "ประเภท"], ...monthly]), "รายจ่ายรายเดือน");
       downloadFile("mies-report-" + stamp() + ".xlsx", X.write(wb, { bookType: "xlsx", type: "array" }), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     } catch (err) { alert("สร้างไฟล์ Excel ไม่ได้ (ต้องต่ออินเทอร์เน็ตในครั้งแรก) ลองใช้ CSV แทน"); }
