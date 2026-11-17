@@ -161,6 +161,23 @@ function monthsCovered(start, end) {
   }
   return out;
 }
+const EXP_CATS = [
+  { id: "ads", label: "โฆษณา (ยิงแอด)", short: "โฆษณา", color: "#EE4D2D" },
+  { id: "pack", label: "บรรจุภัณฑ์ (กล่อง/บับเบิ้ล/เทป)", short: "บรรจุภัณฑ์", color: "#B8862F" },
+  { id: "other", label: "ค่าใช้จ่ายอื่นๆ", short: "อื่นๆ", color: "#68706B" }
+];
+const expCatShort = (id) => (EXP_CATS.find((c) => c.id === id) || EXP_CATS[2]).short;
+function expCategory(name, cat) {
+  if (cat === "ads" || cat === "pack" || cat === "other") return cat;
+  const n = String(name || "");
+  if (/โฆษณา|ยิงแอด|ค่าแอด(?!มิน)|\bads?\b|boost|sponsor/i.test(n)) return "ads";
+  if (/กล่อง|บับเบิ้ล|บับเบิล|เทป|ใบปะหน้า|ถุง|ซอง|กระดาษ|สติ๊กเกอร์|สติกเกอร์|ฟิล์ม|แพ็ค|แพค|\bbox\b|tape|bubble|packag|wrap/i.test(n)) return "pack";
+  return "other";
+}
+function expenseParts(e) {
+  if (e.bill && e.items && e.items.length) return e.items.map((i) => ({ name: i.name, amount: i.amount, cat: expCategory(i.name, i.cat) }));
+  return [{ name: e.name, amount: e.amount, cat: expCategory(e.name, e.cat) }];
+}
 function expenseInMonth(e, key) {
   return e.bill ? e.month === key : e.recurring ? e.month <= key : e.month === key;
 }
@@ -283,8 +300,8 @@ function DateFilter({ preset, setPreset, customRange, setCustomRange }) {
     }
   ), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => setOpen(false) }, "\u0E15\u0E01\u0E25\u0E07"))));
 }
-function ProfitHero({ profit, trend, hasBaseline, expense, pending, deducted, loss, lossCount }) {
-  return /* @__PURE__ */ React.createElement("div", { className: "hero-card" }, /* @__PURE__ */ React.createElement("div", { className: "hero-label" }, deducted ? "NET PROFIT" : "PROFIT"), /* @__PURE__ */ React.createElement("div", { className: "hero-value" }, fmtCurrency(profit)), expense > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "หักรายจ่าย/บิลของทั้งเดือนแล้ว " + fmtCurrency(expense)), pending > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "ยังไม่หักรายจ่าย/บิลของเดือนนี้ " + fmtCurrency(pending) + " (ดูยอดสุทธิในช่วง เดือนนี้)"), lossCount > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "รวมขาดทุนตีกลับ/สูญหายแล้ว " + fmtCurrency(loss) + " (" + lossCount + " รายการ)"), /* @__PURE__ */ React.createElement("div", { className: "hero-trend-row" }, /* @__PURE__ */ React.createElement(Trend, { value: trend, hasBaseline }), hasBaseline && /* @__PURE__ */ React.createElement("span", { className: "hero-trend-caption" }, deducted ? "เทียบช่วงก่อนหน้า (กำไรก่อนหักรายจ่าย)" : "เทียบช่วงก่อนหน้า")), /* @__PURE__ */ React.createElement("svg", { className: "hero-deco", viewBox: "0 0 300 90", preserveAspectRatio: "none" }, /* @__PURE__ */ React.createElement(
+function ProfitHero({ profit, trend, hasBaseline, expense, pending, deducted, cats, loss, lossCount }) {
+  return /* @__PURE__ */ React.createElement("div", { className: "hero-card" }, /* @__PURE__ */ React.createElement("div", { className: "hero-label" }, deducted ? "NET PROFIT" : "PROFIT"), /* @__PURE__ */ React.createElement("div", { className: "hero-value" }, fmtCurrency(profit)), expense > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "หักรายจ่าย/บิลของทั้งเดือนแล้ว " + fmtCurrency(expense)), expense > 0 && cats && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 2 } }, "โฆษณา " + fmtCurrency(cats.ads) + " · บรรจุภัณฑ์ " + fmtCurrency(cats.pack) + " · อื่นๆ " + fmtCurrency(cats.other)), pending > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "ยังไม่หักรายจ่าย/บิลของเดือนนี้ " + fmtCurrency(pending) + " (ดูยอดสุทธิในช่วง เดือนนี้)"), lossCount > 0 && /* @__PURE__ */ React.createElement("div", { className: "hero-trend-caption", style: { marginTop: 4 } }, "รวมขาดทุนตีกลับ/สูญหายแล้ว " + fmtCurrency(loss) + " (" + lossCount + " รายการ)"), /* @__PURE__ */ React.createElement("div", { className: "hero-trend-row" }, /* @__PURE__ */ React.createElement(Trend, { value: trend, hasBaseline }), hasBaseline && /* @__PURE__ */ React.createElement("span", { className: "hero-trend-caption" }, deducted ? "เทียบช่วงก่อนหน้า (กำไรก่อนหักรายจ่าย)" : "เทียบช่วงก่อนหน้า")), /* @__PURE__ */ React.createElement("svg", { className: "hero-deco", viewBox: "0 0 300 90", preserveAspectRatio: "none" }, /* @__PURE__ */ React.createElement(
     "path",
     {
       d: "M0,70 C40,50 60,80 100,55 C140,30 160,60 200,35 C240,10 260,45 300,20",
@@ -438,28 +455,34 @@ function RecentSales({ sales, products, platforms }) {
     return /* @__PURE__ */ React.createElement("div", { className: "tx-row", key: s.id }, /* @__PURE__ */ React.createElement("span", { className: "tx-dot", style: { background: pl?.color || "#999" } }), /* @__PURE__ */ React.createElement("div", { className: "tx-info" }, /* @__PURE__ */ React.createElement("div", { className: "tx-name" }, p?.name || "\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32\u0E44\u0E21\u0E48\u0E1E\u0E1A"), /* @__PURE__ */ React.createElement("div", { className: "tx-sub" }, pl?.name, " \xB7 ", fmtDateShort(s.date), " \xB7 x", s.quantity)), /* @__PURE__ */ React.createElement("div", { className: "tx-figures" }, /* @__PURE__ */ React.createElement("div", { className: "tx-gross" }, fmtCurrency(m.gross)), /* @__PURE__ */ React.createElement("div", { className: "tx-profit" }, "\u0E01\u0E33\u0E44\u0E23 ", fmtCurrency(m.profit))));
   })));
 }
-function ExpenseBreakdown({ expenses, months }) {
+function ExpenseBreakdown({ expenses, months, gross }) {
   const grp = Object.create(null);
+  const cats = { ads: 0, pack: 0, other: 0 };
   months.forEach((key) => expenses.forEach((e) => {
     if (!expenseInMonth(e, key)) return;
-    const parts = e.bill && e.items && e.items.length ? e.items : [{ name: e.name, amount: e.amount }];
-    parts.forEach((it) => {
-      const k = String(it.name || "").trim().toLowerCase();
-      const g = grp[k] || (grp[k] = { name: String(it.name || "").trim() || "ไม่ระบุ", total: 0, count: 0 });
-      g.total += it.amount;
+    expenseParts(e).forEach((p) => {
+      const k = p.cat + "|" + String(p.name || "").trim().toLowerCase();
+      const g = grp[k] || (grp[k] = { name: String(p.name || "").trim() || "ไม่ระบุ", cat: p.cat, total: 0, count: 0 });
+      g.total += p.amount;
       g.count += 1;
+      cats[p.cat] += p.amount;
     });
   }));
-  const rows = Object.values(grp).sort((a, b) => b.total - a.total);
-  if (rows.length === 0) return null;
-  const total = rows.reduce((a, g) => a + g.total, 0);
+  const total = cats.ads + cats.pack + cats.other;
+  if (total <= 0) return null;
+  const sections = EXP_CATS.map((c) => ({ ...c, total: cats[c.id], rows: Object.values(grp).filter((g) => g.cat === c.id).sort((a, b) => b.total - a.total) })).filter((c) => c.rows.length > 0);
   return React.createElement("div", { className: "card section-card" },
-    React.createElement("div", { className: "section-title", style: { marginBottom: 8 } }, "รายจ่าย/บิลที่หักในช่วงนี้"),
-    rows.map((g) => React.createElement("div", { key: g.name, style: { display: "flex", justifyContent: "space-between", gap: 8, padding: "4px 0", fontSize: 13.5 } },
-      React.createElement("span", { style: { minWidth: 0, wordBreak: "break-word" } }, g.name + (g.count > 1 ? " (" + g.count + " รายการ)" : "")),
-      React.createElement("span", { style: { fontWeight: 700 } }, fmtCurrency(g.total)))),
+    React.createElement("div", { className: "section-title", style: { marginBottom: 8 } }, "รายจ่าย/บิลที่หักในช่วงนี้ (แยกหมวด)"),
+    sections.map((c) => React.createElement("div", { key: c.id, style: { marginBottom: 8 } },
+      React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 13.5, fontWeight: 800 } },
+        React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6, minWidth: 0 } }, React.createElement("span", { style: { width: 9, height: 9, borderRadius: 5, background: c.color, flexShrink: 0 } }), c.label),
+        React.createElement("span", { style: { flexShrink: 0 } }, fmtCurrency(c.total) + " · " + Math.round(c.total / total * 1000) / 10 + "%")),
+      c.rows.map((g) => React.createElement("div", { key: g.cat + g.name, style: { display: "flex", justifyContent: "space-between", gap: 8, padding: "3px 0 3px 15px", fontSize: 13 } },
+        React.createElement("span", { style: { minWidth: 0, wordBreak: "break-word" } }, g.name + (g.count > 1 ? " (" + g.count + " รายการ)" : "")),
+        React.createElement("span", { style: { fontWeight: 700, flexShrink: 0 } }, fmtCurrency(g.total)))))),
     React.createElement("div", { style: { display: "flex", justifyContent: "space-between", borderTop: "1px solid #E1E5E0", marginTop: 6, paddingTop: 8, fontWeight: 800 } },
-      React.createElement("span", null, "รวม"), React.createElement("span", null, fmtCurrency(total))));
+      React.createElement("span", null, "รวม"), React.createElement("span", null, fmtCurrency(total))),
+    cats.ads > 0 && gross > 0 && React.createElement("div", { style: { fontSize: 12, color: "#68706B", marginTop: 8 } }, "ค่าแอดคิดเป็น " + Math.round(cats.ads / gross * 1000) / 10 + "% ของยอดขาย · ขายได้ " + fmtCurrency(gross / cats.ads) + " ต่อค่าแอด ฿1 (นับยอดขายทั้งหมด ไม่ใช่เฉพาะที่มาจากแอด)"));
 }
 function Dashboard({ sales, products, platforms, expenses, dateState, setDateState, onGoto }) {
   const { preset, customRange } = dateState;
@@ -477,6 +500,8 @@ function Dashboard({ sales, products, platforms, expenses, dateState, setDateSta
   const expMonths = preset === "month" ? [bkkDate(/* @__PURE__ */ new Date()).slice(0, 7)] : preset === "lastMonth" || preset === "custom" ? monthsCovered(start, end) : [];
   const deducted = expMonths.length > 0;
   const expenseTotal = expenseForMonths(exps, expMonths);
+  const catTotals = { ads: 0, pack: 0, other: 0 };
+  expMonths.forEach((key) => exps.forEach((e) => { if (expenseInMonth(e, key)) expenseParts(e).forEach((p) => { catTotals[p.cat] += p.amount; }); }));
   const baseCur = aggregate(filteredSales, products, platforms);
   const basePrev = aggregate(prevSales, products, platforms);
   const current = { ...baseCur, profit: baseCur.profit - expenseTotal, expense: expenseTotal };
@@ -519,10 +544,11 @@ function Dashboard({ sales, products, platforms, expenses, dateState, setDateSta
       expense: current.expense,
       pending: pendingExp,
       deducted,
+      cats: catTotals,
       loss: current.loss,
       lossCount: current.lossCount
     }
-  ), /* @__PURE__ */ React.createElement(KPIGrid, { current, previous, hasBaseline }), deducted && React.createElement(ExpenseBreakdown, { expenses: exps, months: expMonths }), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement(LowStockAlert, { products, onNavigate: () => onGoto("products") }), /* @__PURE__ */ React.createElement(PlatformPerformance, { sales: filteredSales, products, platforms }), /* @__PURE__ */ React.createElement(TopProducts, { sales: filteredSales, products }), /* @__PURE__ */ React.createElement(RecentSales, { sales, products, platforms }));
+  ), /* @__PURE__ */ React.createElement(KPIGrid, { current, previous, hasBaseline }), deducted && React.createElement(ExpenseBreakdown, { expenses: exps, months: expMonths, gross: baseCur.gross }), /* @__PURE__ */ React.createElement(SalesChart, { sales, products, platforms }), /* @__PURE__ */ React.createElement(LowStockAlert, { products, onNavigate: () => onGoto("products") }), /* @__PURE__ */ React.createElement(PlatformPerformance, { sales: filteredSales, products, platforms }), /* @__PURE__ */ React.createElement(TopProducts, { sales: filteredSales, products }), /* @__PURE__ */ React.createElement(RecentSales, { sales, products, platforms }));
 }
 const BKK = "Asia/Bangkok";
 const bkkParts = (d) => { const o = {}; new Intl.DateTimeFormat("en-CA", { timeZone: BKK, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(d)).forEach((p) => { o[p.type] = p.value; }); return o; };
@@ -1304,7 +1330,7 @@ function ExpenseManager({ expenses, onChange }) {
     setBusy(false);
   }
   async function save() {
-    const itemList = editing.bill ? (editing.items || []).filter((x) => (parseFloat(x.amount) || 0) > 0).map((x) => ({ name: x.name, amount: parseFloat(x.amount) })) : [];
+    const itemList = editing.bill ? (editing.items || []).filter((x) => (parseFloat(x.amount) || 0) > 0).map((x) => ({ name: x.name, amount: parseFloat(x.amount), cat: x.cat && x.cat !== "auto" ? x.cat : void 0 })) : [];
     if (editing.bill && (editing.items || []).length > 0 && itemList.length === 0) { alert("ใส่จำนวนเงินของรายการที่เลือกด้วย"); return; }
     const amount = itemList.length ? r2g(itemList.reduce((a, x) => a + x.amount, 0)) : parseFloat(editing.amount) || 0;
     const name = (editing.name || "").trim() || itemList.map((x) => x.name).join(", ");
@@ -1314,7 +1340,7 @@ function ExpenseManager({ expenses, onChange }) {
       if (editing.slipData) await slipPut(editing.id, editing.slipData);
       else if (editing.slipRemoved) await slipDel(editing.id);
     } catch (err) { alert("บันทึกสลิปไม่สำเร็จ"); return; }
-    const item = { id: editing.id, name, amount, bill: !!editing.bill, slip: hasSlip, items: itemList.length ? itemList : void 0, ...editing.bill ? { date: editing.date, month: editing.date.slice(0, 7) } : { month: editing.month, recurring: !!editing.recurring } };
+    const item = { id: editing.id, name, amount, bill: !!editing.bill, slip: hasSlip, items: itemList.length ? itemList : void 0, cat: !itemList.length && editing.cat && editing.cat !== "auto" ? editing.cat : void 0, ...editing.bill ? { date: editing.date, month: editing.date.slice(0, 7) } : { month: editing.month, recurring: !!editing.recurring } };
     onChange(editing.isNew ? [...expenses, item] : expenses.map((x) => x.id === item.id ? item : x));
     setEditing(null);
   }
@@ -1352,10 +1378,16 @@ function ExpenseManager({ expenses, onChange }) {
       const on = editItems.some((x) => x.name === n);
       return React.createElement("button", { key: n, type: "button", onClick: () => toggleItemE(n), style: { padding: "6px 12px", borderRadius: 20, border: "1px solid " + (on ? "#0F2B26" : "#E1E5E0"), background: on ? "#0F2B26" : "#F6F7F5", color: on ? "#fff" : "#1C201D", fontSize: 13, fontFamily: "inherit", cursor: "pointer" } }, n);
     })),
-    editItems.map((it, k) => React.createElement("div", { key: it.name, style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } },
-      React.createElement("span", { style: { flex: 1, minWidth: 0, fontSize: 13.5, wordBreak: "break-word" } }, it.name),
-      React.createElement("input", { type: "number", min: "0", step: "any", inputMode: "decimal", placeholder: billNames.last[it.name] !== void 0 ? "ล่าสุด " + billNames.last[it.name] : "บาท", value: it.amount, onChange: (ev) => setItemsE(editItems.map((x, j) => j === k ? { ...x, amount: ev.target.value } : x)), style: { width: 104, padding: "8px 10px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
-      React.createElement("button", { type: "button", className: "icon-btn-sm", "aria-label": "ลบรายการ", onClick: () => setItemsE(editItems.filter((_, j) => j !== k)) }, React.createElement(Trash2, { size: 14 })))),
+    editItems.map((it, k) => React.createElement("div", { key: it.name, style: { marginBottom: 8 } },
+      React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+        React.createElement("span", { style: { flex: 1, minWidth: 0, fontSize: 13.5, wordBreak: "break-word" } }, it.name),
+        React.createElement("input", { type: "number", min: "0", step: "any", inputMode: "decimal", placeholder: billNames.last[it.name] !== void 0 ? "ล่าสุด " + billNames.last[it.name] : "บาท", value: it.amount, onChange: (ev) => setItemsE(editItems.map((x, j) => j === k ? { ...x, amount: ev.target.value } : x)), style: { width: 104, padding: "8px 10px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
+        React.createElement("button", { type: "button", className: "icon-btn-sm", "aria-label": "ลบรายการ", onClick: () => setItemsE(editItems.filter((_, j) => j !== k)) }, React.createElement(Trash2, { size: 14 }))),
+      React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 12, color: "#68706B" } },
+        "หมวด:",
+        React.createElement("select", { value: it.cat || "auto", onChange: (ev) => setItemsE(editItems.map((x, j) => j === k ? { ...x, cat: ev.target.value } : x)), style: { fontSize: 12.5, padding: "3px 6px", borderRadius: 8, border: "1px solid #E1E5E0", background: "#fff" } },
+          React.createElement("option", { value: "auto" }, "อัตโนมัติ (" + expCatShort(expCategory(it.name)) + ")"),
+          EXP_CATS.map((c) => React.createElement("option", { key: c.id, value: c.id }, c.short)))))),
     React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
       React.createElement("input", { value: billCustom, placeholder: "เพิ่มรายการอื่น เช่น ค่าถุงซิป", onChange: (ev) => setBillCustom(ev.target.value), onKeyDown: (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addCustomE(); } }, style: { flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 10, border: "1px solid #E1E5E0", font: "inherit", fontSize: 14 } }),
       React.createElement("button", { type: "button", className: "btn btn-outline btn-sm", onClick: addCustomE }, "เพิ่ม")),
@@ -1364,10 +1396,11 @@ function ExpenseManager({ expenses, onChange }) {
   const nameList = [...new Set(bills.flatMap((e) => e.items && e.items.length ? e.items.map((i) => i.name.trim()) : [e.name.trim()]))];
   const scope = sumMonth === "all" ? bills : bills.filter((e) => e.month === sumMonth);
   const grp = Object.create(null);
-  const addGrp = (nm, amt) => { const k = String(nm || "").trim().toLowerCase(); if (!grp[k]) grp[k] = { name: String(nm || "").trim() || "ไม่ระบุ", count: 0, total: 0 }; grp[k].count += 1; grp[k].total += amt; };
-  scope.forEach((e) => { if (e.items && e.items.length) e.items.forEach((i) => addGrp(i.name, i.amount)); else addGrp(e.name, e.amount); });
+  const addGrp = (nm, amt, cat) => { const k = cat + "|" + String(nm || "").trim().toLowerCase(); if (!grp[k]) grp[k] = { name: String(nm || "").trim() || "ไม่ระบุ", cat, count: 0, total: 0 }; grp[k].count += 1; grp[k].total += amt; };
+  scope.forEach((e) => expenseParts(e).forEach((p) => addGrp(p.name, p.amount, p.cat)));
   const sumRows = Object.values(grp).sort((a, b) => b.total - a.total);
   const grand = sumRows.reduce((a, g) => a + g.total, 0);
+  const catGroups = EXP_CATS.map((c) => { const rows = sumRows.filter((g) => g.cat === c.id); return { ...c, rows, total: rows.reduce((a, g) => a + g.total, 0) }; }).filter((c) => c.rows.length > 0);
   const monthTxt = (m) => new Date(m + "-01T00:00:00").toLocaleDateString("th-TH", { month: "long", year: "numeric" });
   return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
     React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" } },
@@ -1377,14 +1410,18 @@ function ExpenseManager({ expenses, onChange }) {
         React.createElement("button", { className: "btn btn-outline", onClick: () => openNew(false) }, React.createElement(Plus, { size: 16 }), " รายเดือน"))),
     bills.length > 0 && React.createElement("div", { style: { background: "#F6F7F5", borderRadius: 12, padding: 12, marginBottom: 12 } },
       React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 } },
-        React.createElement("div", { style: { fontWeight: 700, fontSize: 13.5 } }, "สรุปบิลตามรายการ"),
+        React.createElement("div", { style: { fontWeight: 700, fontSize: 13.5 } }, "สรุปบิลตามหมวดและรายการ"),
         React.createElement("select", { value: sumMonth, onChange: (ev) => setSumMonth(ev.target.value), style: { fontSize: 13, padding: "4px 8px", borderRadius: 8 } },
           React.createElement("option", { value: "all" }, "ทุกเดือน"),
           billMonths.map((m) => React.createElement("option", { key: m, value: m }, monthTxt(m))))),
-      sumRows.map((g) => React.createElement("div", { key: g.name, style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 0", fontSize: 13.5 } },
-        React.createElement("span", { style: { flex: 1, minWidth: 0 } }, g.name),
-        React.createElement("span", { style: { color: "#68706B", fontSize: 12 } }, g.count + " บิล · " + (grand > 0 ? Math.round(g.total / grand * 1000) / 10 : 0) + "%"),
-        React.createElement("span", { style: { fontWeight: 700, minWidth: 70, textAlign: "right" } }, fmtCurrency(g.total)))),
+      catGroups.map((c) => React.createElement("div", { key: c.id, style: { marginBottom: 8 } },
+        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 13.5, fontWeight: 800 } },
+          React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 6, minWidth: 0 } }, React.createElement("span", { style: { width: 9, height: 9, borderRadius: 5, background: c.color, flexShrink: 0 } }), c.label),
+          React.createElement("span", { style: { flexShrink: 0 } }, fmtCurrency(c.total) + " · " + (grand > 0 ? Math.round(c.total / grand * 1000) / 10 : 0) + "%")),
+        c.rows.map((g) => React.createElement("div", { key: g.cat + g.name, style: { display: "flex", alignItems: "center", gap: 8, padding: "3px 0 3px 15px", fontSize: 13 } },
+          React.createElement("span", { style: { flex: 1, minWidth: 0, wordBreak: "break-word" } }, g.name),
+          React.createElement("span", { style: { color: "#68706B", fontSize: 12 } }, g.count + " ครั้ง"),
+          React.createElement("span", { style: { fontWeight: 700, minWidth: 70, textAlign: "right" } }, fmtCurrency(g.total)))))),
       React.createElement("div", { style: { display: "flex", justifyContent: "space-between", borderTop: "1px solid #E1E5E0", marginTop: 6, paddingTop: 8, fontWeight: 800 } }, React.createElement("span", null, "รวมทั้งหมด (" + scope.length + " บิล)"), React.createElement("span", null, fmtCurrency(grand)))),
     React.createElement("datalist", { id: "bill-names" }, nameList.map((n) => React.createElement("option", { key: n, value: n }))),
     rows.length === 0 && React.createElement("div", { className: "mini-empty" }, "ยังไม่มีรายจ่าย กด \"บิล\" เพื่อลงตามวันที่จ่ายพร้อมแนบสลิป"),
@@ -1393,9 +1430,9 @@ function ExpenseManager({ expenses, onChange }) {
       React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         React.createElement("div", { style: { fontSize: 14, fontWeight: 600 } }, e.name),
         e.items && e.items.length > 0 && React.createElement("div", { style: { fontSize: 12, color: "#1C201D", wordBreak: "break-word" } }, e.items.map((i) => i.name + " " + fmtCurrency(i.amount)).join(" · ")),
-        React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, when(e))),
+        React.createElement("div", { style: { fontSize: 12, color: "#68706B" } }, when(e) + (e.items && e.items.length ? "" : " · " + expCatShort(expCategory(e.name, e.cat))))),
       React.createElement("span", { style: { fontWeight: 700, fontSize: 14, marginRight: 4 } }, fmtCurrency(e.amount)),
-      React.createElement("button", { className: "icon-btn-sm", "aria-label": "แก้ไข", onClick: () => setEditing({ ...e, amount: String(e.amount), slipData: null, slipRemoved: false, items: (e.items || []).map((x) => ({ name: x.name, amount: String(x.amount) })) }) }, React.createElement(Edit2, { size: 14 })),
+      React.createElement("button", { className: "icon-btn-sm", "aria-label": "แก้ไข", onClick: () => setEditing({ ...e, amount: String(e.amount), slipData: null, slipRemoved: false, items: (e.items || []).map((x) => ({ name: x.name, amount: String(x.amount), cat: x.cat })) }) }, React.createElement(Edit2, { size: 14 })),
       React.createElement("button", { className: "icon-btn-sm", "aria-label": "ลบ", onClick: () => remove(e) }, React.createElement(Trash2, { size: 14 })))),
     React.createElement("div", { style: { fontSize: 11.5, color: "#99A09B", marginTop: 8 } }, "รายจ่าย/บิลทั้งหมดหักรวมเป็นยอดทั้งเดือนในช่วง เดือนนี้ / เดือนที่แล้ว (ไม่หักในรายวัน) / สลิปเก็บในเครื่องนี้ (ไม่ขึ้นออนไลน์)"),
     viewSlip && React.createElement(SlipViewer, { id: viewSlip.id, name: viewSlip.name, onClose: () => setViewSlip(null) }),
@@ -1404,6 +1441,7 @@ function ExpenseManager({ expenses, onChange }) {
       React.createElement("div", { className: "form-grid" },
         itemsBlock,
         inp(editing.bill ? "ชื่อบิล / ร้าน (ใส่เองถ้าไม่เลือกรายการด้านบน)" : "รายการ", { list: "bill-names", value: editing.name, placeholder: editing.bill ? "เช่น ร้านวัสดุ หรือ ค่าสินค้าล็อตใหม่" : "เช่น ค่าเช่า", onChange: (ev) => setEditing({ ...editing, name: ev.target.value }) }),
+        (!editing.bill || editItems.length === 0) ? React.createElement("label", { className: "field" }, React.createElement("span", null, "หมวด"), React.createElement("select", { value: editing.cat || "auto", onChange: (ev) => setEditing({ ...editing, cat: ev.target.value }) }, React.createElement("option", { value: "auto" }, "อัตโนมัติ (" + expCatShort(expCategory(editing.name)) + ")"), EXP_CATS.map((c) => React.createElement("option", { key: c.id, value: c.id }, c.label)))) : null,
         editing.bill && editItems.length > 0 ? React.createElement("div", { style: { fontSize: 14, fontWeight: 700 } }, "รวมทั้งบิล " + fmtCurrency(editTotal)) : inp(editing.bill ? "จำนวนเงิน (บาท)" : "จำนวนเงิน (บาท/เดือน)", { type: "number", min: "0", step: "any", inputMode: "decimal", value: editing.amount, onChange: (ev) => setEditing({ ...editing, amount: ev.target.value }) }),
         editing.bill ? inp("วันที่จ่าย", { type: "date", value: editing.date, onChange: (ev) => setEditing({ ...editing, date: ev.target.value }) }) : inp("เดือน", { type: "month", value: editing.month, onChange: (ev) => setEditing({ ...editing, month: ev.target.value }) }),
         !editing.bill && React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 14 } }, React.createElement("input", { type: "checkbox", checked: !!editing.recurring, onChange: (ev) => setEditing({ ...editing, recurring: ev.target.checked }) }), "เกิดซ้ำทุกเดือน (ตั้งแต่เดือนนี้เป็นต้นไป)"),
@@ -1443,11 +1481,11 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
       const mod = await import("https://esm.sh/xlsx@0.18.5");
       const X = mod.utils ? mod : mod.default;
       const wb = X.utils.book_new();
-      const bills = [...expenses].filter((e) => e.bill).sort((a, b) => a.date < b.date ? -1 : 1).map((e) => [e.date, e.name, e.amount, e.slip ? "มี" : "-", (e.items || []).map((i) => i.name + " " + i.amount).join(", ")]);
-      const monthly = expenses.filter((e) => !e.bill).map((e) => [e.name, e.amount, e.month, e.recurring ? "ทุกเดือน" : "เดือนเดียว"]);
+      const bills = [...expenses].filter((e) => e.bill).sort((a, b) => a.date < b.date ? -1 : 1).map((e) => [e.date, e.name, e.amount, e.slip ? "มี" : "-", (e.items || []).map((i) => i.name + " " + i.amount).join(", "), [...new Set(expenseParts(e).map((p) => expCatShort(p.cat)))].join(", ")]);
+      const monthly = expenses.filter((e) => !e.bill).map((e) => [e.name, e.amount, e.month, e.recurring ? "ทุกเดือน" : "เดือนเดียว", expCatShort(expCategory(e.name, e.cat))]);
       X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(salesTable()), "รายการขาย");
-      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["วันที่จ่าย", "รายการ", "จำนวนเงิน", "สลิป", "รายการย่อยในบิล"], ...bills]), "บิลรายจ่าย");
-      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["รายการ", "จำนวนเงิน/เดือน", "เดือน", "ประเภท"], ...monthly]), "รายจ่ายรายเดือน");
+      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["วันที่จ่าย", "รายการ", "จำนวนเงิน", "สลิป", "รายการย่อยในบิล", "หมวด"], ...bills]), "บิลรายจ่าย");
+      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["รายการ", "จำนวนเงิน/เดือน", "เดือน", "ประเภท", "หมวด"], ...monthly]), "รายจ่ายรายเดือน");
       downloadFile("mies-report-" + stamp() + ".xlsx", X.write(wb, { bookType: "xlsx", type: "array" }), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     } catch (err) { alert("สร้างไฟล์ Excel ไม่ได้ (ต้องต่ออินเทอร์เน็ตในครั้งแรก) ลองใช้ CSV แทน"); }
   }
