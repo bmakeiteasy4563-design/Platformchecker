@@ -1472,6 +1472,19 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
     try { slips = await slipAll(); } catch (e) {}
     downloadFile("mies-backup-" + stamp() + ".json", JSON.stringify({ app: "mies", version: 2, exportedAt: (/* @__PURE__ */ new Date()).toISOString(), products, sales, platforms, expenses, slips }), "application/json");
   }
+  const [pdfBusy, setPdfBusy] = useState("");
+  async function exportPdfFile() {
+    if (pdfBusy) return;
+    setPdfBusy("กำลังเตรียมไฟล์ PDF...");
+    try {
+      let slips = {};
+      try { slips = await slipAll(); } catch (e) {}
+      const mod = await import("./pdf-backup.js");
+      const h = { computeSaleMetrics, bkkDate, fmtTime, expenseParts, expCatShort, expCategory };
+      await mod.exportPdf({ products, sales, platforms, expenses, slips, h }, "mies-backup-" + stamp() + ".pdf", (d, t) => setPdfBusy("กำลังสร้าง PDF " + d + "/" + t + " หน้า..."));
+    } catch (err) { alert("สร้างไฟล์ PDF ไม่ได้ (ต้องต่ออินเทอร์เน็ตในครั้งแรก) ลองใหม่อีกครั้ง"); }
+    setPdfBusy("");
+  }
   function exportCsv() {
     const q = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
     downloadFile("mies-sales-" + stamp() + ".csv", "\ufeff" + salesTable().map((r) => r.map(q).join(",")).join("\r\n"), "text/csv;charset=utf-8");
@@ -1509,11 +1522,12 @@ function DataBackup({ products, sales, platforms, expenses, onRestore }) {
   return React.createElement("div", { className: "card section-card", style: { marginTop: 14 } },
     React.createElement("div", { className: "section-title", style: { marginBottom: 10 } }, "ไฟล์ในเครื่อง / สำรองข้อมูล"),
     React.createElement("button", { className: "btn btn-primary btn-block", onClick: exportXlsx }, "ส่งออก Excel (.xlsx): ขาย + บิล + รายเดือน"),
+    React.createElement("button", { className: "btn btn-primary btn-block", style: { marginTop: 8 }, disabled: !!pdfBusy, onClick: exportPdfFile }, pdfBusy || "ส่งออก PDF (สรุป + สินค้า + ขาย + บิล + สลิป)"),
     React.createElement("button", { className: "btn btn-outline btn-block", style: { marginTop: 8 }, onClick: exportJson }, "ไฟล์สำรองทั้งหมด (JSON รวมสลิป)"),
     React.createElement("button", { className: "btn btn-ghost btn-block", style: { marginTop: 8 }, onClick: exportCsv }, "ส่งออกรายการขาย (CSV)"),
     React.createElement("label", { className: "btn btn-ghost btn-block", style: { marginTop: 8, cursor: "pointer", textAlign: "center" } }, "กู้คืนจากไฟล์สำรอง",
       React.createElement("input", { type: "file", accept: ".json,application/json", onChange: restore, style: { display: "none" } })),
-    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 33"));
+    React.createElement("div", { style: { fontSize: 11, color: "#99A09B", marginTop: 10, textAlign: "center" } }, "เวอร์ชันแอป 34"));
 }
 function ImportModal({ products, platforms, onClose, onImport }) {
   const [step, setStep] = useState(1);
